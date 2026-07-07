@@ -43,7 +43,7 @@ reactive   deliberative
                    ↓
                 [report]       ← 生成结构化报告
                    ↓
-               [validator]     ← 校验 C1–C8
+               [validator]     ← 校验 C1–C7（报告结构约束）
                 ↕ 有向环②
                    ↓（不合格 → 回到 decision，最多重试2次）
                   END
@@ -116,7 +116,7 @@ class InvestAgentState(TypedDict):
 | `reasoning` | 策略研究员 | 生成3个有明显差异的投资假设，每个标注置信度和优缺点 |
 | `decision` | 投资委员会主席 | 评估3个方案，选择最优，给出可追溯的 investment_thesis |
 | `report` | 资深研究报告撰写专家 | 生成结构化 JSON 报告，语言专业，有数据支撑，格式严格遵循 Spec |
-| `validator` | 独立合规审查员 | 不知道其他节点的决策过程，独立校验报告是否满足 C1–C8 |
+| `validator` | 独立合规审查员 | 不知道其他节点的决策过程，独立校验报告是否满足 C1–C7（C8–C9 由 test_agent.py 覆盖）|
 
 ---
 
@@ -250,7 +250,7 @@ InvestAgent/
 │   └── check_agent_structure.py        # ast检查：validate_report存在、REQUIRED_DIMENSIONS常量、stage节点
 ├── spec/
 │   ├── project-architecture.md         # 本文档
-│   └── invest_spec.md                  # 一等公民，C1–C8 完整约束 + 报告格式定义
+│   └── invest_spec.md                  # 一等公民，C1–C9 完整约束 + 报告格式定义
 ├── src/
 │   ├── __init__.py
 │   ├── schemas.py                      # Pydantic models（5阶段输出 + FinalReport）
@@ -272,7 +272,7 @@ InvestAgent/
     ├── __init__.py
     ├── conftest.py                     # make_valid_report工厂、AKShare mock、API key 隔离 fixture
     ├── test_schemas.py                 # Pydantic 模型边界测试
-    ├── test_reporter.py                # TestC1–TestC8，每个测试类对应一条 spec 约束
+    ├── test_reporter.py                # TestC1–TestC7（报告结构约束）
     ├── test_tools.py                   # 工具函数测试（mock AKShare，零网络依赖）
     ├── test_stages.py                  # 每个阶段函数单元测试（mock LLM 返回）
     ├── test_agent.py                   # graph 路由测试（reactive/deliberative 路径选择正确性）
@@ -285,9 +285,9 @@ InvestAgent/
 
 | 测试层 | 覆盖内容 | 隔离方式 |
 |---|---|---|
-| 单元测试 | `validate_report` C1–C8 逐条、Pydantic 模型边界、工具函数 fallback | `monkeypatch` 删除 API key env，mock AKShare |
+| 单元测试 | `validate_report` C1–C7 逐条（test_reporter.py）、C8–C9 路由（test_agent.py）、Pydantic 模型边界、工具函数 fallback | `monkeypatch` 删除 API key env，mock AKShare |
 | 路由测试 | `assess` 节点正确路由 reactive/deliberative，`validator` 节点正确触发重试 | mock LLM 返回固定 `processing_mode` 和固定报告 |
-| 集成测试 | 完整5阶段流程 + 报告通过 C1–C8 校验 | `@pytest.mark.integration`，需真实 `DASHSCOPE_API_KEY` |
+| 集成测试 | 完整5阶段流程 + 报告通过 C1–C7 校验 + 路由 C8–C9 验证 | `@pytest.mark.integration`，需真实 `DASHSCOPE_API_KEY` |
 
 **测试命令：**
 ```bash
@@ -344,7 +344,7 @@ python linters/check_agent_structure.py   # 结构 lint 检查
 | 1 | SDD：写 spec 约束文档 | `spec/invest_spec.md` | stock-research/spec/research_spec.md 结构 |
 | 2 | 脚手架：目录、配置文件 | `AGENTS.md`, `pyproject.toml`, `requirements*.txt`, `.env.example` | stock-research 同名文件 |
 | 3 | Pydantic schemas | `src/schemas.py` | deliberative_research_langgraph.py 里5个 BaseModel |
-| 4 | **TDD 锚点**：validate_report + C1–C8 测试 | `src/stages/reporter.py`, `tests/test_reporter.py`, `tests/conftest.py` | stock-research/src/reporter.py + tests/conftest.py |
+| 4 | **TDD 锚点**：validate_report + C1–C7 测试 | `src/stages/reporter.py`, `tests/test_reporter.py`, `tests/conftest.py` | stock-research/src/reporter.py + tests/conftest.py |
 | 5 | AKShare 工具层 + 测试 | `src/tools.py`, `tests/test_tools.py` | hybrid_wealth_advisor_langgraph.py @tool 结构 |
 | 6 | 5个阶段函数 + 角色 persona | `src/stages/perception.py` … `reporter.py` | deliberative_research_langgraph.py 5个函数 + prompt 模板 |
 | 7 | LangGraph 连线 + validator 节点 + 路由测试 | `src/agent.py`, `src/stages/validator.py`, `tests/test_agent.py` | hybrid_wealth_advisor_langgraph.py StateGraph 结构 |
