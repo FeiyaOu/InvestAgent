@@ -1,0 +1,64 @@
+name: Quality Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 第一道门：结构检查（Harness Engineering 的机械化执行）
+  # 确保 validate_report、REQUIRED_DIMENSIONS、stage 函数等关键结构不缺失
+  structure-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Structure Lint
+        run: python linters/check_agent_structure.py
+
+  # 第二道门：单元测试（TDD 的验证）
+  # 覆盖 C1–C9 全部约束、stage 节点错误处理、工具 fallback、路由函数
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: structure-lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short -m "not integration"
+        env:
+          DASHSCOPE_API_KEY: ""
+          USE_REAL_DATA: "false"
+
+  # 第三道门：集成测试（仅 main 分支，需要真实 API Key）
+  # 完整运行 InvestAgent，验证 deliberative 路径生成合规报告
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: unit-tests
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run integration tests
+        run: pytest tests/test_integration.py -v -m integration --tb=short
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          USE_REAL_DATA: "false"
