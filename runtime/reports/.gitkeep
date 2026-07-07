@@ -1,0 +1,3 @@
+# Generated research reports are stored here as JSON files.
+# Format: YYYY-MM-DD_<research_topic>.json
+# This directory is not tracked by git (see .gitignore).

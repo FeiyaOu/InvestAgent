@@ -1,0 +1,8 @@
+# Development dependencies (not needed in production)
+
+# Testing
+pytest>=8.0
+pytest-mock>=3.12
+
+# Linting
+ruff>=0.4

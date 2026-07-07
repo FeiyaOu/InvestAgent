@@ -1,0 +1,2 @@
+# Structural linter — implemented in Phase 8
+# Checks: validate_report() exists, REQUIRED_DIMENSIONS defined, stage nodes present

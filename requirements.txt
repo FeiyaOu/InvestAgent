@@ -1,0 +1,24 @@
+# Runtime dependencies
+
+# LangGraph — StateGraph, ToolNode, add_messages reducer
+langgraph>=0.2
+
+# LangChain core + community
+langchain>=0.3
+langchain-core>=0.3
+langchain-community>=0.3
+
+# Qwen LLM via DashScope
+dashscope>=1.20
+
+# Pydantic — stage output validation
+pydantic>=2.0
+
+# AKShare — free A-share market data (no API key required)
+akshare>=1.12
+
+# Streamlit — UI
+streamlit>=1.35
+
+# Environment variable loading
+python-dotenv>=1.0
