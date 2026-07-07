@@ -27,6 +27,7 @@ from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -60,7 +61,15 @@ _ASSESS_SYSTEM = """你是一个智能投研助手的协调层。
 同时解析出研究主题、行业焦点、时间范围。
 输出必须是 JSON 格式。"""
 
-_ASSESS_HUMAN = """用户查询：{user_query}
+_ASSESS_HUMAN = """对话历史（如有，最近2轮）：
+{conversation_summary}
+
+当前查询：{user_query}
+
+判断规则：
+- 如果当前查询是对已有分析的跟进（追问细节/风险/建议），选 reactive
+- 如果是全新研究主题或不同行业，选 deliberative
+- 没有对话历史时，按查询本身的复杂度判断
 
 请输出 JSON：
 {{
@@ -90,8 +99,22 @@ def assess_query(state: InvestAgentState) -> dict:
     print(f"[评估] 分析查询：'{state.get('user_query', '')[:50]}...'")
 
     try:
+        # 构建对话历史摘要（最近2轮，用于跟进检测）
+        messages = state.get("messages", [])
+        if messages:
+            recent = messages[-4:]  # 最近4条消息（约2轮）
+            conversation_summary = "\n".join(
+                f"{'用户' if isinstance(m, HumanMessage) else 'Agent'}: {getattr(m, 'content', '')[:100]}"
+                for m in recent if getattr(m, 'content', '')
+            )
+        else:
+            conversation_summary = "（无历史对话）"
+
         chain = _create_assess_chain()
-        result = chain.invoke({"user_query": state.get("user_query", "")})
+        result = chain.invoke({
+            "user_query": state.get("user_query", ""),
+            "conversation_summary": conversation_summary,
+        })
 
         # C8：强制校验 processing_mode，非法值 fallback 到 reactive
         mode = result.get("processing_mode", _DEFAULT_MODE)
@@ -117,9 +140,9 @@ def assess_query(state: InvestAgentState) -> dict:
         return {
             "processing_mode": _DEFAULT_MODE,
             "query_type": "simple",
-            "research_topic": state.get("user_query", ""),
-            "industry_focus": "",
-            "time_horizon": "中期",
+            "research_topic": state.get("research_topic") or state.get("user_query", ""),
+            "industry_focus": state.get("industry_focus", ""),
+            "time_horizon": state.get("time_horizon", "中期"),
         }
 
 
@@ -246,7 +269,7 @@ def create_invest_agent() -> Any:
         {"decision": "decision", END: END},
     )
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=MemorySaver())
 
 
 # ============================================================
@@ -258,6 +281,7 @@ def run_invest_agent(
     research_topic: str = "",
     industry_focus: str = "",
     time_horizon: str = "中期",
+    thread_id: str = "default",
 ) -> dict:
     """运行 InvestAgent 并返回最终状态"""
     agent = create_invest_agent()
@@ -287,4 +311,5 @@ def run_invest_agent(
     print(agent.get_graph().draw_mermaid())
     print("=" * 60 + "\n")
 
-    return agent.invoke(initial_state)
+    config = {"configurable": {"thread_id": thread_id}}
+    return agent.invoke(initial_state, config=config)
