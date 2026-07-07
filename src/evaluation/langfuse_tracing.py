@@ -37,13 +37,23 @@ def get_langfuse_handler() -> Any | None:
         return None
 
     try:
-        from langfuse.callback import CallbackHandler
+        # langfuse v4: from langfuse.langchain import CallbackHandler
+        # reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from env
+        try:
+            from langfuse.langchain import CallbackHandler
+        except ImportError:
+            from langfuse.callback import CallbackHandler  # type: ignore  # v3
 
-        handler = CallbackHandler(
-            public_key=public_key,
-            secret_key=secret_key,
-            host=os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
-        )
+        # v4: keys read from env (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY)
+        # v3: pass explicitly; try both
+        try:
+            handler = CallbackHandler()
+        except TypeError:
+            handler = CallbackHandler(
+                public_key=public_key,
+                secret_key=secret_key,
+                host=os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
+            )
         return handler
     except ImportError:
         print("[LangFuse] langfuse 未安装，跳过追踪。安装命令: pip install langfuse")
