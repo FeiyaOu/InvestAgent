@@ -54,22 +54,38 @@ def validator(state: InvestAgentState) -> dict:
             "error": None,
         }
 
-    # 校验失败
-    print(f"[校验] 发现 {len(errors)} 个问题: {[e['type'] for e in errors]}")
+    # 区分关键错误（触发重试）和质量警告（接受，仅记录）
+    # 关键错误：报告结构缺失或评级非法，不可接受
+    CRITICAL_ERROR_TYPES = {"missing_dimension", "invalid_rating", "empty_report", "invalid_json"}
+    critical_errors = [e for e in errors if e["type"] in CRITICAL_ERROR_TYPES]
+    quality_warnings = [e for e in errors if e["type"] not in CRITICAL_ERROR_TYPES]
+
+    if quality_warnings and not critical_errors:
+        # 只有质量警告，无结构性错误 → 接受报告，记录警告
+        warn_types = [e["type"] for e in quality_warnings]
+        print(f"[校验] 带警告完成 ⚠️ 质量问题（不重试）: {warn_types}")
+        return {
+            "validation_errors": quality_warnings,
+            "current_phase": "completed",
+            "error": None,
+        }
+
+    # 存在关键错误
+    print(f"[校验] 发现 {len(critical_errors)} 个关键问题: {[e['type'] for e in critical_errors]}")
 
     if retry_count >= MAX_VALIDATOR_RETRIES:
-        print(f"[校验] 已达最大重试次数 {MAX_VALIDATOR_RETRIES}，带错误完成")
+        print(f"[校验] 已达最大重试次数 {MAX_VALIDATOR_RETRIES}，带关键错误完成")
         return {
             "validation_errors": errors,
-            "current_phase": "completed",   # 超过重试次数，强制完成
-            "error": f"报告校验失败（已重试{retry_count}次）: {[e['type'] for e in errors]}",
+            "current_phase": "completed",
+            "error": f"报告存在关键错误（已重试{retry_count}次）: {[e['type'] for e in critical_errors]}",
         }
 
     # 触发有向环②：回到 decision 阶段重新生成
-    print(f"[校验] 触发重试 #{retry_count + 1}，路由回 decision 阶段")
+    print(f"[校验] 触发重试 #{retry_count + 1}，关键错误: {[e['type'] for e in critical_errors]}")
     return {
         "validation_errors": errors,
         "retry_count": retry_count + 1,
-        "current_phase": "decision",  # 路由回 decision
+        "current_phase": "decision",
         "error": None,
     }

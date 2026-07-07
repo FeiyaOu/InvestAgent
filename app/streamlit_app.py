@@ -356,6 +356,8 @@ if run_btn and user_query.strip():
 
     # ---- 保存本轮到历史 ----
     st.session_state["conversation_history"].append(turn_record)
+    # 触发重渲染，使"追问"按钮在下次渲染时变为可用
+    st.rerun()
 
 elif run_btn and not user_query.strip():
     st.warning("请输入查询内容后再运行。")
