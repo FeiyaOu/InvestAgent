@@ -311,5 +311,16 @@ def run_invest_agent(
     print(agent.get_graph().draw_mermaid())
     print("=" * 60 + "\n")
 
-    config = {"configurable": {"thread_id": thread_id}}
+    config: dict = {"configurable": {"thread_id": thread_id}}
+
+    # 注入 LangFuse 追踪（如已配置）
+    try:
+        from src.evaluation.langfuse_tracing import get_langfuse_handler
+        handler = get_langfuse_handler()
+        if handler:
+            config["callbacks"] = [handler]
+            print("[LangFuse] 追踪已启用")
+    except Exception:
+        pass
+
     return agent.invoke(initial_state, config=config)

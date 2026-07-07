@@ -22,3 +22,13 @@ streamlit>=1.35
 
 # Environment variable loading
 python-dotenv>=1.0
+
+# ---- Evaluation layer (Phase 9) ----
+# LangFuse — LLM call tracing (optional, needs LANGFUSE_* env vars)
+langfuse>=3.0
+
+# OpenEvals — LLM-as-judge evaluators
+openevals>=0.1
+
+# LangSmith — dataset management and batch evaluation (optional)
+langsmith>=0.9

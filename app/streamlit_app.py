@@ -47,6 +47,9 @@ if "turn_count" not in st.session_state:
 if "last_result" not in st.session_state:   # ← 新增：持久化最新运行结果
     st.session_state["last_result"] = None
 
+if "last_eval_results" not in st.session_state:
+    st.session_state["last_eval_results"] = None
+
 # ============================================================
 # 侧边栏：设置
 # ============================================================
@@ -75,6 +78,7 @@ with st.sidebar:
         st.session_state["turn_count"] = 0
         st.session_state["last_result"] = None
         st.session_state["last_query"] = ""
+        st.session_state["last_eval_results"] = None
         st.rerun()
 
     st.divider()
@@ -282,6 +286,7 @@ if run_btn and user_query.strip():
     # 持久化 → rerun（rerun 后展示块从 session_state 读取结果）
     st.session_state["last_result"] = final_state
     st.session_state["last_query"] = user_query.strip()
+    st.session_state["last_eval_results"] = None   # 新一轮运行清除旧评估
     st.session_state["turn_count"] = turn_num
     st.session_state["conversation_history"].append(turn_record)
     st.rerun()
@@ -406,3 +411,52 @@ if st.session_state.get("last_result"):
         retry_count = final_state.get("retry_count", 0)
         if retry_count > 0:
             st.info(f"ℹ️ Validator 触发了 {retry_count} 次重试")
+
+    # ============================================================
+    # 评估面板（OpenEvals，点击后按需运行）
+    # ============================================================
+    if final_state.get("final_report"):
+        st.divider()
+        st.subheader("📊 质量评估（OpenEvals）")
+        st.caption("使用 Qwen 作为评判 LLM，评估报告的相关性、幻觉程度和投资论点质量")
+
+        eval_col1, eval_col2 = st.columns([1, 3])
+        with eval_col1:
+            run_eval_btn = st.button("▶ 运行评估", use_container_width=True,
+                                     help="需要 DASHSCOPE_API_KEY（约需10-20秒）")
+        with eval_col2:
+            if not os.getenv("DASHSCOPE_API_KEY"):
+                st.warning("需要 DASHSCOPE_API_KEY 才能运行评估")
+
+        if run_eval_btn:
+            from src.evaluation.openevals_eval import run_openevals
+
+            with st.spinner("OpenEvals 评估中（Qwen-as-judge）..."):
+                eval_results = run_openevals(final_state)
+                st.session_state["last_eval_results"] = eval_results
+
+        # 显示评估结果
+        if st.session_state.get("last_eval_results"):
+            er = st.session_state["last_eval_results"]
+            ec1, ec2, ec3 = st.columns(3)
+
+            def _score_display(result: dict, label: str, col):
+                score = result.get("score")
+                with col:
+                    if score is None:
+                        st.metric(label, "N/A")
+                        st.caption(result.get("reasoning", "")[:100])
+                    else:
+                        score_pct = f"{score:.0%}" if isinstance(score, float) else str(score)
+                        color = "🟢" if isinstance(score, float) and score >= 0.7 else (
+                            "🟡" if isinstance(score, float) and score >= 0.4 else "🔴"
+                        )
+                        st.metric(label, f"{color} {score_pct}")
+                        with st.expander("评审理由"):
+                            st.write(result.get("reasoning", ""))
+
+            _score_display(er.get("answer_relevance", {}), "回答相关性", ec1)
+            _score_display(er.get("hallucination", {}),    "幻觉程度↓", ec2)
+            _score_display(er.get("thesis_quality", {}),   "投资论点质量", ec3)
+
+            st.caption("注：幻觉程度分数越低越好（0=无幻觉，1=大量虚构）")
