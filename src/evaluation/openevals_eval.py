@@ -46,12 +46,21 @@ def _get_judge_llm() -> Any | None:
         return None
 
 
-def _safe_evaluate(evaluator: Any, **kwargs) -> dict:
+def _safe_evaluate(evaluator: Any, feedback_key: str, **kwargs) -> dict:
     """安全调用评估器，捕获异常返回 error 结果"""
     try:
         result = evaluator(**kwargs)
+        # OpenEvals 返回 {feedback_key: score, "reasoning": "..."}
+        # 不是 {"score": ...}，需要用 feedback_key 提取分数
+        score = result.get(feedback_key)
+        if score is None:
+            # 兜底：取第一个非 reasoning 的数值
+            score = next(
+                (v for k, v in result.items() if k != "reasoning" and isinstance(v, (int, float))),
+                None,
+            )
         return {
-            "score": result.get("score") or result.get("feedback_key"),
+            "score": score,
             "reasoning": result.get("reasoning", ""),
             "raw": result,
         }
@@ -86,7 +95,7 @@ def evaluate_answer_relevance(query: str, report_str: str) -> dict:
             continuous=True,
             use_reasoning=True,
         )
-        return _safe_evaluate(evaluator, inputs=query, outputs=report_str)
+        return _safe_evaluate(evaluator, feedback_key="answer_relevance", inputs=query, outputs=report_str)
 
     except ImportError:
         return {"score": None, "reasoning": "openevals 未安装"}
@@ -132,6 +141,7 @@ def evaluate_hallucination(
         )
         return _safe_evaluate(
             evaluator,
+            feedback_key="hallucination",
             inputs=query,
             context=context,
             outputs=report_str,
@@ -193,6 +203,7 @@ def evaluate_thesis_quality(research_topic: str, investment_thesis: str) -> dict
         )
         return _safe_evaluate(
             evaluator,
+            feedback_key="thesis_quality",
             inputs=research_topic,
             outputs=investment_thesis,
         )

@@ -223,6 +223,15 @@ if run_btn and user_query.strip():
     }
     config = {"configurable": {"thread_id": thread_id}}
 
+    # 注入 LangFuse 追踪（配置了 LANGFUSE_* 才启用）
+    try:
+        from src.evaluation.langfuse_tracing import get_langfuse_handler
+        lf_handler = get_langfuse_handler()
+        if lf_handler:
+            config["callbacks"] = [lf_handler]
+    except Exception:
+        pass
+
     with st.status(f"InvestAgent 运行中（第{turn_num}轮）...", expanded=True) as status:
         try:
             agent = create_invest_agent()
