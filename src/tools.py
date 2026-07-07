@@ -187,6 +187,123 @@ def search_stock_news(keyword: str) -> str:
 
 
 # ============================================================
+# 常用股票名称→代码映射（避免依赖 stock_zh_a_spot_em 实时查询）
+# ============================================================
+
+_STOCK_NAME_TO_CODE = {
+    # 消费
+    "贵州茅台": "600519", "茅台": "600519",
+    "五粮液": "000858",
+    "洋河股份": "002304",
+    "海天味业": "603288",
+    "伊利股份": "600887",
+    "美的集团": "000333",
+    "格力电器": "000651",
+    "海尔智家": "600690",
+    # 新能源 / 科技
+    "宁德时代": "300750",
+    "比亚迪":   "002594",
+    "隆基绿能": "601012",
+    "通威股份": "600438",
+    "阳光电源": "300274",
+    "晶澳科技": "002459",
+    "中芯国际": "688981",
+    "韦尔股份": "603501",
+    "汇川技术": "300124",
+    # 金融
+    "中国平安": "601318",
+    "招商银行": "600036",
+    "兴业银行": "601166",
+    "中信证券": "600030",
+    "东方财富": "300059",
+    # 医药
+    "恒瑞医药": "600276",
+    "药明康德": "603259",
+    "迈瑞医疗": "300760",
+    # 互联网 / 通信
+    "中国移动": "600941",
+    "中国联通": "600050",
+    "三六零":   "601360",
+    # 港股（供参考）
+    "腾讯":     "00700",
+    "阿里巴巴": "09988",
+    "美团":     "03690",
+}
+
+
+def _resolve_stock_code(query: str) -> str | None:
+    """从名称或代码中解析出股票代码"""
+    query = query.strip()
+    # 已是代码格式
+    if query.isdigit() and len(query) == 6:
+        return query
+    # 名称查表
+    for name, code in _STOCK_NAME_TO_CODE.items():
+        if name in query or query in name:
+            return code
+    return None
+
+
+# ============================================================
+# 工具 5：个股历史表现（新增）
+# ============================================================
+
+@tool
+def get_stock_performance(query: str) -> str:
+    """查询指定股票最近一个月的价格表现和涨跌情况。
+
+    Args:
+        query: 股票名称或代码，如"贵州茅台"、"600519"、"宁德时代"
+    """
+    if not _should_use_real_data():
+        return (
+            f"{query}（模拟数据）：近一个月涨跌幅 +8.3%，"
+            f"最新收盘价 1,680元，成交量较前月增加12%，"
+            f"机构持仓比例上升至45.2%"
+        )
+
+    code = _resolve_stock_code(query)
+    if not code:
+        return f"未能识别股票 '{query}'，请使用股票代码（如600519）或以下常用名称：{list(_STOCK_NAME_TO_CODE.keys())[:5]}"
+
+    try:
+        import akshare as ak
+        from datetime import date, timedelta
+
+        end = date.today().strftime("%Y%m%d")
+        start = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
+
+        df = ak.stock_zh_a_hist(
+            symbol=code, period="daily",
+            start_date=start, end_date=end, adjust="qfq"
+        )
+        if df is None or len(df) == 0:
+            return f"{query}（{code}）近期无交易数据，可能为停牌状态。"
+
+        first_close = df.iloc[0]["收盘"]
+        last_close = df.iloc[-1]["收盘"]
+        pct = round((last_close - first_close) / first_close * 100, 2)
+        high = df["最高"].max()
+        low = df["最低"].min()
+        avg_vol = df["成交量"].mean()
+
+        direction = "+" if pct >= 0 else ""
+        return (
+            f"{query}（{code}）近30日表现：\n"
+            f"涨跌幅 {direction}{pct}%，"
+            f"最新收盘 {last_close:.2f}元，"
+            f"区间最高 {high:.2f}元，区间最低 {low:.2f}元，"
+            f"日均成交量 {avg_vol:.0f}手"
+        )
+
+    except Exception as e:
+        return (
+            f"{query} 近期数据暂时无法获取（{type(e).__name__}），"
+            f"请稍后重试或使用模拟数据模式。"
+        )
+
+
+# ============================================================
 # 工具列表（供 agent.py 的 ToolNode 使用）
 # ============================================================
 
@@ -195,4 +312,5 @@ INVEST_TOOLS = [
     get_index_performance,
     get_macro_indicators,
     search_stock_news,
+    get_stock_performance,   # 新增：个股表现查询
 ]

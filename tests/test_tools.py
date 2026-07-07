@@ -37,8 +37,8 @@ def mock_data_mode(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestToolRegistration:
 
     def test_all_tools_in_invest_tools_list(self) -> None:
-        """INVEST_TOOLS 列表应包含全部4个工具"""
-        assert len(INVEST_TOOLS) == 4
+        """INVEST_TOOLS 列表应包含全部5个工具"""
+        assert len(INVEST_TOOLS) == 5
 
     def test_each_tool_has_name(self) -> None:
         """每个工具应有 name 属性（LangChain tool 必须项）"""
@@ -59,6 +59,7 @@ class TestToolRegistration:
         assert "get_index_performance" in names
         assert "get_macro_indicators" in names
         assert "search_stock_news" in names
+        assert "get_stock_performance" in names
 
 
 # ============================================================
