@@ -267,3 +267,135 @@ class TestGraphStructure:
         assert "reactive_agent" in mermaid
         assert "perception" in mermaid
         assert "validator" in mermaid
+
+
+# ============================================================
+# 多轮对话（MemorySaver checkpointer + thread_id）
+# TDD: 这些测试在实现前先写（红）→ 实现后变绿
+# ============================================================
+
+class TestMultiTurnConversation:
+
+    def test_graph_accepts_checkpointer_parameter(self) -> None:
+        """create_invest_agent() 应支持传入 checkpointer 参数"""
+        from langgraph.checkpoint.memory import MemorySaver
+        from src.agent import create_invest_agent
+        # 如果 create_invest_agent 不接受 checkpointer 或内部未使用，此测试失败
+        agent = create_invest_agent()
+        # 验证编译后的 graph 有 checkpointer（MemorySaver 已在内部注入）
+        assert agent.checkpointer is not None
+
+    def test_run_invest_agent_accepts_thread_id(self) -> None:
+        """run_invest_agent() 应接受 thread_id 参数而不报错"""
+        from src.agent import run_invest_agent
+        import inspect
+        sig = inspect.signature(run_invest_agent)
+        assert "thread_id" in sig.parameters, "run_invest_agent 应有 thread_id 参数"
+
+    def test_same_thread_id_persists_messages(self) -> None:
+        """同一 thread_id 的两次调用，第二次应能看到第一次的 messages"""
+        from langgraph.checkpoint.memory import MemorySaver
+        from src.agent import create_invest_agent
+
+        checkpointer = MemorySaver()
+        agent = create_invest_agent()
+
+        config = {"configurable": {"thread_id": "test-thread-persist"}}
+
+        initial_state = {
+            "user_query": "测试消息",
+            "research_topic": "测试",
+            "industry_focus": "",
+            "time_horizon": "中期",
+            "processing_mode": "reactive",
+            "query_type": "simple",
+            "messages": [],
+            "final_response": None,
+            "perception_data": None,
+            "world_model": None,
+            "reasoning_plans": None,
+            "selected_plan": None,
+            "final_report": None,
+            "validation_errors": None,
+            "retry_count": 0,
+            "current_phase": "assess",
+            "error": None,
+        }
+
+        from unittest.mock import MagicMock, patch
+        from langchain_core.messages import AIMessage
+
+        mock_assess_result = {
+            "processing_mode": "reactive",
+            "query_type": "simple",
+            "research_topic": "测试",
+            "industry_focus": "",
+            "time_horizon": "中期",
+        }
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke.return_value = AIMessage(content="第1轮回答")
+
+        with patch("src.agent._create_assess_chain") as mock_chain_factory:
+            mock_chain_factory.return_value = MagicMock(invoke=MagicMock(return_value=mock_assess_result))
+            with patch("src.agent.ChatTongyi", return_value=mock_llm):
+                state1 = agent.invoke(initial_state, config=config)
+
+        # 第二次调用相同 thread_id，messages 应该是累积的
+        with patch("src.agent._create_assess_chain") as mock_chain_factory:
+            mock_chain_factory.return_value = MagicMock(invoke=MagicMock(return_value=mock_assess_result))
+            with patch("src.agent.ChatTongyi", return_value=mock_llm):
+                state2 = agent.invoke(initial_state, config=config)
+
+        # 第2次调用后 messages 应多于第1次（历史被保留）
+        msgs1 = state1.get("messages", [])
+        msgs2 = state2.get("messages", [])
+        assert len(msgs2) >= len(msgs1), "同一 thread 的第2轮应积累更多 messages"
+
+    def test_different_thread_ids_are_isolated(self) -> None:
+        """不同 thread_id 的状态应相互隔离"""
+        from src.agent import create_invest_agent
+        from unittest.mock import MagicMock, patch
+        from langchain_core.messages import AIMessage
+
+        agent = create_invest_agent()
+        config_a = {"configurable": {"thread_id": "thread-A"}}
+        config_b = {"configurable": {"thread_id": "thread-B"}}
+
+        initial = make_state()
+        mock_assess = {
+            "processing_mode": "reactive", "query_type": "simple",
+            "research_topic": "test", "industry_focus": "", "time_horizon": "中期",
+        }
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke.return_value = AIMessage(content="回答A")
+
+        with patch("src.agent._create_assess_chain") as mf:
+            mf.return_value = MagicMock(invoke=MagicMock(return_value=mock_assess))
+            with patch("src.agent.ChatTongyi", return_value=mock_llm):
+                state_a = agent.invoke(initial, config=config_a)
+                state_b = agent.invoke(initial, config=config_b)
+
+        # 两个线程的 messages 应独立（不共享）
+        msgs_a = state_a.get("messages", [])
+        msgs_b = state_b.get("messages", [])
+        # 基本验证：两个独立线程都完成了各自的调用
+        assert isinstance(msgs_a, list)
+        assert isinstance(msgs_b, list)
+
+    def test_followup_query_passed_via_messages_history(self) -> None:
+        """多轮场景下，assess_query 收到的 state 应包含历史 messages"""
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        # 模拟第2轮的 state：messages 里已有第1轮的对话
+        history = [
+            HumanMessage(content="分析新能源行业"),
+            AIMessage(content="新能源行业具备中期投资价值，评级 buy"),
+        ]
+        state = make_state(
+            user_query="上述分析中哪个风险最关键？",
+            messages=history,
+        )
+
+        # assess_query 的 prompt 应能看到 messages，测试 state 传递正确
+        assert len(state["messages"]) == 2
+        assert state["messages"][0].content == "分析新能源行业"

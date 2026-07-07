@@ -353,6 +353,83 @@ python linters/check_agent_structure.py   # 结构 lint 检查
 
 ---
 
-## 14. 面试叙事
+## 14. 多轮对话支持（feat/multi-turn-conversation）
 
-> "InvestAgent 演示了三件 LangChain 做不到、需要 LangGraph 的事：有向环（工具调用循环）、`add_messages` reducer 追加语义、图结构级别的条件路由。架构上我把 Reactive 和 Deliberative 两条路径合并在一个 StateGraph 里，所有节点共享同一个 State，整个执行过程可以用 Mermaid 可视化，被 LangFuse 端到端追踪。Deliberative 路径的5个阶段每个都有专家角色 persona，感知阶段调用 AKShare 获取真实市场数据，后续4个阶段是纯 LLM 推理，最后由独立 Validator 节点校验报告是否满足8条 Spec 约束，不合格时通过第二个有向环路由回决策阶段重新生成。"
+### 14.1 实现机制
+
+多轮对话通过 LangGraph 内置的 **MemorySaver checkpointer** + **thread_id** 实现。
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+
+def create_invest_agent():
+    ...
+    return workflow.compile(checkpointer=MemorySaver())
+
+def run_invest_agent(..., thread_id: str = "default") -> dict:
+    config = {"configurable": {"thread_id": thread_id}}
+    return agent.invoke(initial_state, config=config)
+```
+
+**thread_id 语义：**
+- 同一 `thread_id` → LangGraph 加载上轮 state，`messages` 继续追加，形成对话历史
+- 不同 `thread_id` → 独立隔离的对话，互不影响
+- Streamlit 每个浏览器会话自动生成唯一 UUID 作为 `thread_id`
+
+**生命周期：** MemorySaver 是内存存储，Streamlit 服务重启后历史丢失。如需持久化可换用 `SqliteSaver`（无需额外依赖）。
+
+### 14.2 assess_query 的跟进检测逻辑
+
+多轮场景下，`assess_query` 需要区分两种情况：
+
+| 情况 | 判断依据 | 路由 | AKShare + 5阶段 |
+|---|---|---|---|
+| 跟进同一话题 | 当前查询针对已有分析的细节、风险、建议 | reactive | ❌ 不重跑 |
+| 全新话题/行业 | 新研究主题，与历史对话无直接关联 | deliberative | ✅ 重跑 |
+
+assess_query 的 prompt 必须包含对话历史摘要，使 LLM 能够做出正确判断。
+
+### 14.3 多轮行为示例
+
+```
+第1轮（thread="abc"）：
+  输入："请深度分析新能源行业的中期投资机会"
+  路由：deliberative → 5阶段完成 → final_report 存入 state
+  MemorySaver 保存完整 state
+
+第2轮（thread="abc"）：
+  输入："上述分析中哪个风险最值得关注？"
+  assess_query 读取 messages 历史 → 判断为跟进问题
+  路由：reactive → 基于已有 final_report 直接回答
+  不重调 AKShare，不重跑5阶段 ✓
+
+第3轮（thread="abc"）：
+  输入："请分析医疗器械行业的投资机会"  ← 全新话题
+  assess_query 判断：全新研究主题
+  路由：deliberative → 重新调 AKShare（sector="医疗器械"）→ 重跑5阶段 ✓
+```
+
+### 14.4 新增测试类
+
+`tests/test_agent.py` 新增 `TestMultiTurnConversation`：
+
+```python
+class TestMultiTurnConversation:
+    def test_graph_accepts_checkpointer(self): ...
+    def test_same_thread_id_accumulates_messages(self): ...
+    def test_different_thread_ids_are_isolated(self): ...
+    def test_new_thread_starts_with_empty_messages(self): ...
+    def test_followup_routes_to_reactive(self): ...
+```
+
+### 14.5 Streamlit UI 变化
+
+- 侧边栏加 "🔄 新对话" 按钮（重置 thread_id）
+- 顶部加折叠式对话历史面板（每轮一行摘要）
+- 侧边栏显示当前轮次和 thread_id 缩略
+
+---
+
+## 15. 面试叙事
+
+> "InvestAgent 演示了三件 LangChain 做不到、需要 LangGraph 的事：有向环（工具调用循环）、`add_messages` reducer 追加语义、图结构级别的条件路由。架构上我把 Reactive 和 Deliberative 两条路径合并在一个 StateGraph 里，所有节点共享同一个 State，整个执行过程可以用 Mermaid 可视化，被 LangFuse 端到端追踪。Deliberative 路径的5个阶段每个都有专家角色 persona，感知阶段调用 AKShare 获取真实市场数据，后续4个阶段是纯 LLM 推理，最后由独立 Validator 节点校验报告是否满足9条 Spec 约束，不合格时通过第二个有向环路由回决策阶段重新生成。通过 MemorySaver checkpointer 和 thread_id，Agent 还支持多轮对话，能识别跟进问题并跳过已有数据的重新采集。"
