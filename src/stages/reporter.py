@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-报告生成与结构校验模块
+阶段5：报告生成（Report）+ 结构校验
+角色：资深研究报告撰写专家 / 独立校验入口
 
-validate_report() 是本项目唯一的报告校验入口。
+两个职责：
+1. report_generation(state) — LangGraph 节点函数，生成最终 JSON 报告
+2. validate_report(report)  — 唯一报告校验入口，校验 C1–C7
+
 错误信息中嵌入修复指令（Harness Engineering 核心理念），
 让 AI Agent 看到错误后可以自我纠正，形成闭环。
 
@@ -11,6 +15,15 @@ validate_report() 是本项目唯一的报告校验入口。
 """
 
 from __future__ import annotations
+
+import json
+import os
+from datetime import date
+from typing import Any
+
+from langchain_community.chat_models import ChatTongyi
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 
 # ---- Spec 约束常量（linter 会检查这些常量必须存在）----
 REQUIRED_DIMENSIONS = ["fundamental", "market", "news", "analyst"]
@@ -172,3 +185,110 @@ def validate_report(report: dict) -> list[dict]:
         })
 
     return errors
+
+
+# ============================================================
+# LangGraph 节点函数：报告生成
+# 角色：资深研究报告撰写专家
+# ============================================================
+
+_REPORT_SYSTEM = """你是一名资深研究报告撰写专家。
+你的职责是将前四个分析阶段的研究成果整合为一份结构严谨、符合规范的投研报告。
+报告必须有数据支撑，语言专业，格式严格遵循要求。
+输出必须是严格的 JSON 格式。"""
+
+_REPORT_HUMAN = """请基于以下研究成果生成最终投研报告：
+
+研究主题：{research_topic}
+行业焦点：{industry_focus}
+时间范围：{time_horizon}
+报告日期：{report_date}
+
+市场感知数据：
+{perception_data}
+
+市场世界模型：
+{world_model}
+
+选定的投资决策：
+{selected_plan}
+
+请生成符合规范的 JSON 报告：
+{{
+  "research_topic": "{research_topic}",
+  "industry_focus": "{industry_focus}",
+  "time_horizon": "{time_horizon}",
+  "report_date": "{report_date}",
+  "dimensions": {{
+    "fundamental": {{"summary": "不少于100字的基本面分析", "confidence": 0.85}},
+    "market": {{"summary": "不少于100字的市场面分析", "confidence": 0.78}},
+    "news": {{"summary": "不少于100字的消息面分析", "confidence": 0.72}},
+    "analyst": {{"summary": "不少于100字的分析师观点综合", "confidence": 0.80}}
+  }},
+  "investment_thesis": "不少于50字的核心投资逻辑",
+  "supporting_evidence": ["证据1", "证据2", "证据3"],
+  "overall_rating": "buy（或hold/sell）",
+  "risk_factors": ["风险1", "风险2"],
+  "sources": ["来源1", "来源2", "来源3"]
+}}"""
+
+
+def _create_report_chain() -> Any:
+    """创建报告生成推理链（提取为函数以支持测试 mock）"""
+    llm = ChatTongyi(
+        model_name="qwen-max",   # 报告生成用最强模型确保质量
+        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
+    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", _REPORT_SYSTEM),
+        ("human", _REPORT_HUMAN),
+    ])
+    return prompt | llm | JsonOutputParser()
+
+
+def report_generation(state: "InvestAgentState") -> dict:  # type: ignore[name-defined]
+    """报告生成阶段节点函数：将5阶段研究成果整合为结构化投研报告"""
+    print("[报告] 生成最终投研报告...")
+
+    if not state.get("selected_plan"):
+        return {
+            "error": "报告生成阶段缺少决策结果，请先完成决策阶段",
+            "current_phase": "decision",
+        }
+
+    try:
+        today = date.today().isoformat()
+        chain = _create_report_chain()
+        result = chain.invoke({
+            "research_topic": state.get("research_topic", ""),
+            "industry_focus": state.get("industry_focus", ""),
+            "time_horizon": state.get("time_horizon", "中期"),
+            "report_date": today,
+            "perception_data": json.dumps(
+                state.get("perception_data", {}), ensure_ascii=False, indent=2
+            ),
+            "world_model": json.dumps(
+                state.get("world_model", {}), ensure_ascii=False, indent=2
+            ),
+            "selected_plan": json.dumps(
+                state.get("selected_plan", {}), ensure_ascii=False, indent=2
+            ),
+        })
+
+        # 确保报告日期正确
+        if isinstance(result, dict):
+            result["report_date"] = today
+
+        print("[报告] 完成 ✓")
+        return {
+            "final_report": json.dumps(result, ensure_ascii=False),
+            "current_phase": "validator",
+            "error": None,
+        }
+
+    except Exception as e:
+        print(f"[报告] 出错: {e}")
+        return {
+            "error": f"报告生成阶段出错: {str(e)}",
+            "current_phase": "report",
+        }
