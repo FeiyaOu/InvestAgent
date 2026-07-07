@@ -1,5 +1,5 @@
-PYTHON ?= python3
-STREAMLIT ?= streamlit
+PYTHON ?= ../.venv/bin/python
+STREAMLIT ?= ../.venv/bin/python -m streamlit
 
 .PHONY: install install-dev test test-reporter test-agent test-integration lint run
 

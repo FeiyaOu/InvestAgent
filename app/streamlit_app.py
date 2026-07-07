@@ -13,7 +13,11 @@ import json
 import os
 from datetime import datetime
 
+from dotenv import load_dotenv
 import streamlit as st
+
+# 自动加载项目根目录的 .env 文件
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # ============================================================
 # 页面配置
