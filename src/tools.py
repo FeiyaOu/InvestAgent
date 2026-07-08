@@ -42,21 +42,47 @@ def get_sector_performance(sector: str) -> str:
 
     try:
         import akshare as ak  # 懒导入，避免未安装时模块加载失败
+        from datetime import date, timedelta
 
-        df = ak.stock_board_industry_summary_ths()
-        matched = df[df["板块名称"].str.contains(sector, na=False)]
-        if matched.empty:
-            return f"未找到与 '{sector}' 相关的板块，请尝试更通用的行业名称（如'新能源'而非'光伏组件'）。"
-        row = matched.iloc[0]
-        return (
-            f"{row.get('板块名称', sector)}："
-            f"涨跌幅 {row.get('涨跌幅', 'N/A')}%，"
-            f"成交额 {row.get('成交额', 'N/A')}，"
-            f"主力净流入 {row.get('主力净流入', 'N/A')}"
+        board_name = sector  # 记录精确板块名，供 fallback 使用
+
+        # 优先：实时板块汇总（同花顺），含成交额和主力净流入
+        try:
+            df = ak.stock_board_industry_summary_ths()
+            matched = df[df["板块名称"].str.contains(sector, na=False)]
+            if not matched.empty:
+                row = matched.iloc[0]
+                board_name = row.get("板块名称", sector)
+                return (
+                    f"{board_name}："
+                    f"涨跌幅 {row.get('涨跌幅', 'N/A')}%，"
+                    f"成交额 {row.get('成交额', 'N/A')}，"
+                    f"主力净流入 {row.get('主力净流入', 'N/A')}"
+                )
+        except Exception:
+            pass  # 实时接口失败，fall through 到历史接口
+
+        # 回退：历史行情接口（对网络限制更宽松）
+        end = date.today().strftime("%Y%m%d")
+        start = (date.today() - timedelta(days=7)).strftime("%Y%m%d")
+        hist = ak.stock_board_industry_hist_ths(
+            symbol=board_name, period="日K", start_date=start, end_date=end
         )
+        if hist is None or len(hist) == 0:
+            return f"未找到与 '{sector}' 相关的板块数据，请尝试更通用的行业名称（如'新能源'而非'光伏组件'）。"
+        close_col = "收盘" if "收盘" in hist.columns else hist.columns[2]
+        first_close = float(hist.iloc[0][close_col])
+        last_close  = float(hist.iloc[-1][close_col])
+        pct = round((last_close - first_close) / first_close * 100, 2) if first_close else 0
+        direction = "+" if pct >= 0 else ""
+        return (
+            f"{board_name}（历史行情，近7日）："
+            f"涨跌幅 {direction}{pct}%，最新收盘点位 {last_close:.2f}"
+        )
+
     except Exception as e:
         return (
-            f"{sector} 板块实时数据暂时无法获取（{type(e).__name__}），"
+            f"{sector} 板块数据暂时无法获取（{type(e).__name__}），"
             f"请基于已有市场信息进行分析。"
         )
 
