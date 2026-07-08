@@ -12,7 +12,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import uuid
+
+# 将项目根目录加入 Python 路径，确保 Streamlit Cloud 部署时 src 包可被正常导入
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from dotenv import load_dotenv
 import streamlit as st
@@ -49,6 +55,9 @@ if "last_result" not in st.session_state:   # ← 新增：持久化最新运行
 
 if "last_eval_results" not in st.session_state:
     st.session_state["last_eval_results"] = None
+
+if "query_input" not in st.session_state:
+    st.session_state["query_input"] = ""
 
 # ============================================================
 # 侧边栏：设置
@@ -159,7 +168,6 @@ st.divider()
 # ---- 输入区 ----
 user_query = st.text_area(
     "输入您的查询",
-    value=st.session_state.get("query_input", ""),
     height=80,
     placeholder="例如：请分析新能源行业的中期投资机会，重点关注光伏板块...",
     key="query_input",
