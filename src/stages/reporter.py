@@ -25,6 +25,8 @@ from langchain_community.chat_models import ChatTongyi
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
+from src.state import InvestAgentState
+
 # ---- Spec 约束常量（linter 会检查这些常量必须存在）----
 REQUIRED_DIMENSIONS = ["fundamental", "market", "news", "analyst"]
 VALID_RATINGS = {"buy", "hold", "sell"}
@@ -246,7 +248,7 @@ def _create_report_chain() -> Any:
     return prompt | llm | JsonOutputParser()
 
 
-def report_generation(state: "InvestAgentState") -> dict:  # type: ignore[name-defined]
+def report_generation(state: InvestAgentState) -> dict:
     """报告生成阶段节点函数：将5阶段研究成果整合为结构化投研报告"""
     print("[报告] 生成最终投研报告...")
 

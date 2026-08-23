@@ -23,7 +23,6 @@ from src.stages.reporter import report_generation
 from src.stages.validator import validator
 from tests.conftest import make_valid_report
 
-
 # ---- 测试用初始状态工厂 ----
 
 def make_base_state(**overrides) -> dict:

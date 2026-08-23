@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END
 
@@ -26,7 +25,6 @@ from src.agent import (
     should_continue_tools,
 )
 from src.state import MAX_VALIDATOR_RETRIES, VALID_PROCESSING_MODES
-
 
 # ---- 状态工厂 ----
 
@@ -278,7 +276,6 @@ class TestMultiTurnConversation:
 
     def test_graph_accepts_checkpointer_parameter(self) -> None:
         """create_invest_agent() 应支持传入 checkpointer 参数"""
-        from langgraph.checkpoint.memory import MemorySaver
         from src.agent import create_invest_agent
         # 如果 create_invest_agent 不接受 checkpointer 或内部未使用，此测试失败
         agent = create_invest_agent()
@@ -287,17 +284,17 @@ class TestMultiTurnConversation:
 
     def test_run_invest_agent_accepts_thread_id(self) -> None:
         """run_invest_agent() 应接受 thread_id 参数而不报错"""
-        from src.agent import run_invest_agent
         import inspect
+
+        from src.agent import run_invest_agent
         sig = inspect.signature(run_invest_agent)
         assert "thread_id" in sig.parameters, "run_invest_agent 应有 thread_id 参数"
 
     def test_same_thread_id_persists_messages(self) -> None:
         """同一 thread_id 的两次调用，第二次应能看到第一次的 messages"""
-        from langgraph.checkpoint.memory import MemorySaver
         from src.agent import create_invest_agent
 
-        checkpointer = MemorySaver()
+        # 不另建 MemorySaver：create_invest_agent() 编译时已自带 checkpointer
         agent = create_invest_agent()
 
         config = {"configurable": {"thread_id": "test-thread-persist"}}
@@ -323,6 +320,7 @@ class TestMultiTurnConversation:
         }
 
         from unittest.mock import MagicMock, patch
+
         from langchain_core.messages import AIMessage
 
         mock_assess_result = {
@@ -353,9 +351,11 @@ class TestMultiTurnConversation:
 
     def test_different_thread_ids_are_isolated(self) -> None:
         """不同 thread_id 的状态应相互隔离"""
-        from src.agent import create_invest_agent
         from unittest.mock import MagicMock, patch
+
         from langchain_core.messages import AIMessage
+
+        from src.agent import create_invest_agent
 
         agent = create_invest_agent()
         config_a = {"configurable": {"thread_id": "thread-A"}}
@@ -384,7 +384,7 @@ class TestMultiTurnConversation:
 
     def test_followup_query_passed_via_messages_history(self) -> None:
         """多轮场景下，assess_query 收到的 state 应包含历史 messages"""
-        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.messages import AIMessage, HumanMessage
 
         # 模拟第2轮的 state：messages 里已有第1轮的对话
         history = [

@@ -19,7 +19,6 @@ LangGraph StateGraph — 混合型投研 Agent 连线
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
@@ -307,7 +306,7 @@ def run_invest_agent(
     }
 
     print("\n" + "=" * 60)
-    print(f"InvestAgent — LangGraph Mermaid 流程图：")
+    print("InvestAgent — LangGraph Mermaid 流程图：")
     print(agent.get_graph().draw_mermaid())
     print("=" * 60 + "\n")
 

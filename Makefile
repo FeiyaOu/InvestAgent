@@ -1,5 +1,7 @@
-PYTHON ?= ../.venv/bin/python
-STREAMLIT ?= ../.venv/bin/python -m streamlit
+# 项目自带虚拟环境（.venv 在本项目根目录下，不是上级目录）
+# 需要用其他解释器时可覆盖：make test PYTHON=python3
+PYTHON ?= .venv/bin/python
+STREAMLIT ?= $(PYTHON) -m streamlit
 
 .PHONY: install install-dev test test-reporter test-agent test-integration lint run
 

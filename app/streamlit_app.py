@@ -20,11 +20,32 @@ _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 import streamlit as st
 
+from src.tools import (
+    USE_REAL_DATA_ENV,
+    parse_bool,
+    akshare_available,
+    data_mode,
+    set_use_real_data,
+)
+
 # 自动加载项目根目录的 .env 文件
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+_ENV_PATH = os.path.join(_project_root, ".env")
+load_dotenv(dotenv_path=_ENV_PATH)
+
+
+def _configured_use_real_data() -> bool:
+    """toggle 的初始值取自 .env 文件本身，而不是进程 os.environ。
+
+    os.environ 会被上一次（甚至其他浏览器会话的）toggle 写脏，
+    直接拿它当默认值会让 .env 里的 USE_REAL_DATA=true 永远生效不了。
+    """
+    raw = dotenv_values(_ENV_PATH).get(USE_REAL_DATA_ENV)
+    if raw is None:
+        raw = os.getenv(USE_REAL_DATA_ENV)
+    return parse_bool(raw, default=True)
 
 # ============================================================
 # 页面配置
@@ -59,6 +80,14 @@ if "last_eval_results" not in st.session_state:
 if "query_input" not in st.session_state:
     st.session_state["query_input"] = ""
 
+# toggle 的持久状态：首次进入按 .env 配置初始化，之后由 widget 自己维护
+if "use_real_data" not in st.session_state:
+    st.session_state["use_real_data"] = _configured_use_real_data()
+
+# 每次脚本重跑（包括 st.rerun 之后）都先把会话选择同步进 os.environ，
+# 这样工具层的读取不再依赖"侧边栏必须先渲染"这个隐式顺序。
+set_use_real_data(st.session_state["use_real_data"])
+
 # ============================================================
 # 侧边栏：设置
 # ============================================================
@@ -66,12 +95,53 @@ if "query_input" not in st.session_state:
 with st.sidebar:
     st.title("⚙️ 设置")
 
-    use_real_data = st.toggle(
+    def _on_data_mode_change() -> None:
+        """toggle 改变时立刻把新值写进 os.environ，不等下一次脚本重跑。"""
+        set_use_real_data(st.session_state["use_real_data"])
+
+    st.toggle(
         "使用真实 AKShare 数据",
-        value=False,
-        help="关闭时使用 mock 数据（适合演示或网络不稳定时）",
+        key="use_real_data",          # 显式 key：状态存入 session_state，跨 rerun 不丢失
+        on_change=_on_data_mode_change,
+        help="关闭时使用 mock 数据（适合演示或网络不稳定时）。默认值来自 .env 的 USE_REAL_DATA。",
     )
-    os.environ["USE_REAL_DATA"] = "true" if use_real_data else "false"
+
+    # 回显工具层实际生效的模式（读的是 src.tools，不是本地变量），
+    # toggle 与真实行为不一致时一眼可见
+    _mode = data_mode()
+    if _mode == "real":
+        _ak_ok, _ak_info = akshare_available()
+        if _ak_ok:
+            st.success(f"🟢 数据源：真实 AKShare（v{_ak_info}）")
+        else:
+            st.error(f"🔴 已选真实数据，但 akshare 不可用：{_ak_info}\n\n请执行 `pip install akshare`")
+    else:
+        st.info("🟡 数据源：模拟 mock 数据")
+
+    with st.expander("🔍 数据源自检"):
+        st.caption("直接调用工具层，确认返回的是真实行情还是 mock / 降级文本")
+        if st.button("运行自检", use_container_width=True):
+            from src.tools import (
+                get_index_performance,
+                get_macro_indicators,
+                get_sector_performance,
+                search_stock_news,
+            )
+
+            probes = [
+                ("行业板块", lambda: get_sector_performance.invoke({"sector": "光伏"})),
+                ("指数行情", lambda: get_index_performance.invoke({})),
+                ("宏观指标", lambda: get_macro_indicators.invoke({})),
+                ("市场新闻", lambda: search_stock_news.invoke({"keyword": "新能源"})),
+            ]
+            for name, probe in probes:
+                with st.spinner(f"{name}..."):
+                    try:
+                        out = probe()
+                    except Exception as e:  # 工具内部已兜底，这里只防御性兜一层
+                        out = f"调用异常：{type(e).__name__}: {e}"
+                st.markdown(f"**{name}**")
+                st.caption(out[:400])
 
     st.divider()
 
@@ -206,6 +276,9 @@ _NODE_LABELS = {
 if run_btn and user_query.strip():
     from src.agent import create_invest_agent
 
+    # 兜底：运行前再同步一次数据模式，确保 stream() 期间工具读到的就是 toggle 的当前值
+    set_use_real_data(st.session_state["use_real_data"])
+
     turn_num = st.session_state["turn_count"] + 1
     thread_id = st.session_state["thread_id"]
 
@@ -240,7 +313,8 @@ if run_btn and user_query.strip():
     except Exception:
         pass
 
-    with st.status(f"InvestAgent 运行中（第{turn_num}轮）...", expanded=True) as status:
+    _mode_label = "真实 AKShare 数据" if data_mode() == "real" else "模拟 mock 数据"
+    with st.status(f"InvestAgent 运行中（第{turn_num}轮）· {_mode_label}...", expanded=True) as status:
         try:
             agent = create_invest_agent()
             accumulated_state = dict(initial_state)

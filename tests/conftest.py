@@ -12,9 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-from src.stages.reporter import MIN_SOURCES, MIN_SUMMARY_LENGTH, MIN_THESIS_LENGTH
-
-
 # ---- 环境隔离 ----
 
 @pytest.fixture(autouse=True)

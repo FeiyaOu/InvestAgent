@@ -14,10 +14,9 @@ Pydantic 数据模型
 from __future__ import annotations
 
 from datetime import date
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator
-
 
 # ============================================================
 # 阶段1：感知（Perception）

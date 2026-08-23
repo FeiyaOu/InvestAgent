@@ -13,15 +13,12 @@ from __future__ import annotations
 import pytest
 
 from src.stages.reporter import (
-    MIN_SOURCES,
     MIN_SUMMARY_LENGTH,
     MIN_THESIS_LENGTH,
     REQUIRED_DIMENSIONS,
-    VALID_RATINGS,
     validate_report,
 )
 from tests.conftest import make_valid_report
-
 
 # ============================================================
 # C1：维度完整性 — 报告必须包含全部4个维度

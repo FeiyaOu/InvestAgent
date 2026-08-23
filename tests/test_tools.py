@@ -15,12 +15,16 @@ import pytest
 
 from src.tools import (
     INVEST_TOOLS,
+    USE_REAL_DATA_ENV,
+    _should_use_real_data,
+    data_mode,
     get_index_performance,
     get_macro_indicators,
     get_sector_performance,
+    parse_bool,
     search_stock_news,
+    set_use_real_data,
 )
-
 
 # ---- fixture：强制使用 mock 数据模式 ----
 
@@ -28,6 +32,70 @@ from src.tools import (
 def mock_data_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """所有工具测试默认使用 mock 数据，不调用真实 AKShare"""
     monkeypatch.setenv("USE_REAL_DATA", "false")
+
+
+# ============================================================
+# 数据模式开关 — USE_REAL_DATA
+#
+# 回归点：Streamlit toggle 打开后工具仍走 mock 数据。
+# 根因有两条，这里都覆盖：
+#   1. 只认小写 "true"，.env 写成 True / 1 / 带行尾注释时被判为 false
+#   2. UI 写入 os.environ 的值与工具读取的解析规则不一致
+# ============================================================
+
+class TestDataModeSwitch:
+
+    @pytest.mark.parametrize("raw", ["true", "True", "TRUE", " true ", "1", "yes", "on", 'true  # 注释'])
+    def test_truthy_values_enable_real_data(self, monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+        """真实数据的各种常见写法都应被识别为 True"""
+        monkeypatch.setenv(USE_REAL_DATA_ENV, raw)
+        assert _should_use_real_data() is True, f"{raw!r} 应被解析为 True"
+
+    @pytest.mark.parametrize("raw", ["false", "False", "FALSE", " false ", "0", "no", "off"])
+    def test_falsy_values_disable_real_data(self, monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+        """mock 模式的各种常见写法都应被识别为 False"""
+        monkeypatch.setenv(USE_REAL_DATA_ENV, raw)
+        assert _should_use_real_data() is False, f"{raw!r} 应被解析为 False"
+
+    def test_unset_defaults_to_real_data(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """未设置环境变量时默认走真实数据（与 spec 一致）"""
+        monkeypatch.delenv(USE_REAL_DATA_ENV, raising=False)
+        assert _should_use_real_data() is True
+
+    def test_garbage_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """无法识别的值退回默认值，而不是静默判为 False"""
+        monkeypatch.setenv(USE_REAL_DATA_ENV, "maybe")
+        assert _should_use_real_data() is True
+
+    def test_set_use_real_data_roundtrip(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """UI 写入 → 工具读取 必须闭环：set_use_real_data(True) 后工具就得走真实数据"""
+        monkeypatch.setenv(USE_REAL_DATA_ENV, "false")
+        set_use_real_data(True)
+        assert _should_use_real_data() is True
+        assert data_mode() == "real"
+
+        set_use_real_data(False)
+        assert _should_use_real_data() is False
+        assert data_mode() == "mock"
+
+    def test_toggle_on_switches_tool_output_off_mock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """打开开关后，工具不得再返回"（模拟数据）"字样"""
+        set_use_real_data(False)
+        assert "模拟数据" in get_sector_performance.invoke({"sector": "新能源"})
+
+        set_use_real_data(True)
+        import unittest.mock as mock
+        with mock.patch.dict("sys.modules", {"akshare": mock.MagicMock(
+            stock_board_industry_summary_ths=mock.MagicMock(side_effect=ConnectionError("断网"))
+        )}):
+            result = get_sector_performance.invoke({"sector": "新能源"})
+        assert "模拟数据" not in result
+
+    def test_parse_bool_respects_explicit_default(self) -> None:
+        """parse_bool 的 default 参数应在值缺失/无法识别时生效"""
+        assert parse_bool(None, default=False) is False
+        assert parse_bool("", default=False) is False
+        assert parse_bool("false", default=True) is False
 
 
 # ============================================================
