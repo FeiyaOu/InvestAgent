@@ -27,13 +27,9 @@ def _get_qwen_judge() -> Any | None:
         return None
 
     try:
-        from langchain_community.chat_models import ChatTongyi
+        from src.llm import FAST_MODEL, create_llm
 
-        return ChatTongyi(
-            model_name="qwen-turbo",
-            dashscope_api_key=api_key,
-            temperature=0,
-        )
+        return create_llm(FAST_MODEL, dashscope_api_key=api_key, temperature=0)
     except Exception as e:
         print(f"[Eval] Qwen judge 创建失败: {e}")
         return None

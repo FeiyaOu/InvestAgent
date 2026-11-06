@@ -17,14 +17,13 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import date
 from typing import Any
 
-from langchain_community.chat_models import ChatTongyi
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
+from src.llm import STRONG_MODEL, create_llm
 from src.state import InvestAgentState
 
 # ---- Spec 约束常量（linter 会检查这些常量必须存在）----
@@ -237,10 +236,7 @@ _REPORT_HUMAN = """请基于以下研究成果生成最终投研报告：
 
 def _create_report_chain() -> Any:
     """创建报告生成推理链（提取为函数以支持测试 mock）"""
-    llm = ChatTongyi(
-        model_name="qwen-max",   # 报告生成用最强模型确保质量
-        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
-    )
+    llm = create_llm(STRONG_MODEL)
     prompt = ChatPromptTemplate.from_messages([
         ("system", _REPORT_SYSTEM),
         ("human", _REPORT_HUMAN),

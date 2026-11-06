@@ -12,13 +12,12 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
-from langchain_community.chat_models import ChatTongyi
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
+from src.llm import STRONG_MODEL, create_llm
 from src.state import InvestAgentState
 
 _SYSTEM = """你是一名投资委员会主席。
@@ -52,10 +51,7 @@ _HUMAN = """请评估以下候选方案并作出最终投资决策：
 
 def _create_chain() -> Any:
     """创建决策阶段推理链（提取为函数以支持测试 mock）"""
-    llm = ChatTongyi(
-        model_name="qwen-max",   # 决策阶段用更强的模型
-        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
-    )
+    llm = create_llm(STRONG_MODEL)
     prompt = ChatPromptTemplate.from_messages([
         ("system", _SYSTEM),
         ("human", _HUMAN),

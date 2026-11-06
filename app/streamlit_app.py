@@ -352,7 +352,9 @@ if run_btn and user_query.strip():
                 else:
                     st.write(label)
 
-            final_state = accumulated_state
+            # chunk 只含各节点的增量，messages 由 add_messages reducer 追加，dict.update 会覆盖成最后一批；
+            # 从 checkpointer 取 reducer 合并后的完整 state
+            final_state = {**accumulated_state, **agent.get_state(config).values}
             status.update(label="✅ 运行完成", state="complete", expanded=False)
 
         except Exception as e:

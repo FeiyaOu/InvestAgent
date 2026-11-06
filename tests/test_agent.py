@@ -13,13 +13,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END
 
 from src.agent import (
     _DEFAULT_MODE,
     assess_query,
     extract_reactive_response,
+    reactive_agent,
     route_after_assess,
     route_after_validator,
     should_continue_tools,
@@ -223,6 +224,54 @@ class TestToolCallRouting:
 
 
 # ============================================================
+# reactive_agent：用户问题必须写入 state，否则工具循环第二轮 LLM 看不到问题
+# ============================================================
+
+class TestReactiveAgentMessages:
+
+    def _run(self, state: dict) -> tuple[dict, list]:
+        response = AIMessage(content="茅台最新收盘 1471.87 元")
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke.return_value = response
+        with patch("src.agent.create_llm", return_value=mock_llm):
+            result = reactive_agent(state)
+        sent = mock_llm.bind_tools.return_value.invoke.call_args.args[0]
+        return result, sent
+
+    def test_first_call_persists_system_and_user_query(self) -> None:
+        result, _ = self._run(make_state(user_query="茅台最新股价"))
+        msgs = result["messages"]
+        assert isinstance(msgs[0], SystemMessage)
+        assert isinstance(msgs[1], HumanMessage) and msgs[1].content == "茅台最新股价"
+        assert isinstance(msgs[-1], AIMessage)
+
+    def test_after_tool_call_only_appends_response_and_keeps_question(self) -> None:
+        history = [
+            SystemMessage(content="sys"),
+            HumanMessage(content="茅台最新股价"),
+            AIMessage(content="", tool_calls=[
+                {"name": "get_stock_performance", "args": {"query": "茅台"}, "id": "tc1"},
+            ]),
+            ToolMessage(content="最新收盘 1471.87元", tool_call_id="tc1"),
+        ]
+        result, sent = self._run(make_state(user_query="茅台最新股价", messages=history))
+        assert len(result["messages"]) == 1
+        assert any(isinstance(m, HumanMessage) and m.content == "茅台最新股价" for m in sent)
+
+    def test_new_turn_with_history_appends_new_query(self) -> None:
+        history = [
+            SystemMessage(content="sys"),
+            HumanMessage(content="茅台最新股价"),
+            AIMessage(content="茅台最新收盘 1471.87 元"),
+        ]
+        result, sent = self._run(make_state(user_query="五粮液呢？", messages=history))
+        new_humans = [m for m in result["messages"] if isinstance(m, HumanMessage)]
+        assert [m.content for m in new_humans] == ["五粮液呢？"]
+        assert not any(isinstance(m, SystemMessage) for m in result["messages"])
+        assert sent[-1].content == "五粮液呢？"
+
+
+# ============================================================
 # Validator 路由（有向环②的控制函数）
 # ============================================================
 
@@ -335,13 +384,13 @@ class TestMultiTurnConversation:
 
         with patch("src.agent._create_assess_chain") as mock_chain_factory:
             mock_chain_factory.return_value = MagicMock(invoke=MagicMock(return_value=mock_assess_result))
-            with patch("src.agent.ChatTongyi", return_value=mock_llm):
+            with patch("src.agent.create_llm", return_value=mock_llm):
                 state1 = agent.invoke(initial_state, config=config)
 
         # 第二次调用相同 thread_id，messages 应该是累积的
         with patch("src.agent._create_assess_chain") as mock_chain_factory:
             mock_chain_factory.return_value = MagicMock(invoke=MagicMock(return_value=mock_assess_result))
-            with patch("src.agent.ChatTongyi", return_value=mock_llm):
+            with patch("src.agent.create_llm", return_value=mock_llm):
                 state2 = agent.invoke(initial_state, config=config)
 
         # 第2次调用后 messages 应多于第1次（历史被保留）
@@ -371,7 +420,7 @@ class TestMultiTurnConversation:
 
         with patch("src.agent._create_assess_chain") as mf:
             mf.return_value = MagicMock(invoke=MagicMock(return_value=mock_assess))
-            with patch("src.agent.ChatTongyi", return_value=mock_llm):
+            with patch("src.agent.create_llm", return_value=mock_llm):
                 state_a = agent.invoke(initial, config=config_a)
                 state_b = agent.invoke(initial, config=config_b)
 

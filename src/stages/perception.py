@@ -11,13 +11,12 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from langchain_community.chat_models import ChatTongyi
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
+from src.llm import FAST_MODEL, create_llm
 from src.state import InvestAgentState
 from src.tools import (
     get_index_performance,
@@ -63,10 +62,7 @@ _HUMAN = """请收集以下研究主题的市场信息并整理为结构化报�
 
 def _create_chain() -> Any:
     """创建感知阶段推理链（提取为函数以支持测试 mock）"""
-    llm = ChatTongyi(
-        model_name="qwen-turbo",
-        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
-    )
+    llm = create_llm(FAST_MODEL)
     prompt = ChatPromptTemplate.from_messages([
         ("system", _SYSTEM),
         ("human", _HUMAN),

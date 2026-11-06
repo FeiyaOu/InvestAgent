@@ -19,17 +19,16 @@ LangGraph StateGraph — 混合型投研 Agent 连线
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from langchain_community.chat_models import ChatTongyi
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from src.llm import FAST_MODEL, create_llm
 from src.stages.decision import decision
 from src.stages.modeling import modeling
 from src.stages.perception import perception
@@ -82,10 +81,7 @@ _ASSESS_HUMAN = """对话历史（如有，最近2轮）：
 
 def _create_assess_chain() -> Any:
     """创建评估链（提取为函数以支持测试 mock）"""
-    llm = ChatTongyi(
-        model_name="qwen-turbo",
-        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
-    )
+    llm = create_llm(FAST_MODEL)
     prompt = ChatPromptTemplate.from_messages([
         ("system", _ASSESS_SYSTEM),
         ("human", _ASSESS_HUMAN),
@@ -153,21 +149,19 @@ def reactive_agent(state: InvestAgentState) -> dict:
     """反应式路径：LLM 决策调用工具，快速回答简单查询"""
     print("[反应] 处理简单查询...")
 
-    llm_with_tools = ChatTongyi(
-        model_name="qwen-turbo",
-        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
-    ).bind_tools(INVEST_TOOLS)
+    llm_with_tools = create_llm(FAST_MODEL).bind_tools(INVEST_TOOLS)
 
-    messages = state.get("messages", [])
-    if not messages:
-        # 首次调用，构建初始消息
-        messages = [
-            SystemMessage(content="你是一个专业的市场数据助手，可以调用工具查询实时市场数据，提供简洁准确的回答。"),
-            HumanMessage(content=state.get("user_query", "")),
-        ]
+    history = state.get("messages", [])
+    new_messages = []
+    # 上一条是 ToolMessage 说明处于工具循环中，问题已在历史里；否则是新一轮提问。
+    # 新消息必须随 response 一起写回 state，否则工具返回后 LLM 看不到用户问题，会乱调工具
+    if not history or not isinstance(history[-1], ToolMessage):
+        if not history:
+            new_messages.append(SystemMessage(content="你是一个专业的市场数据助手，可以调用工具查询实时市场数据，提供简洁准确的回答。"))
+        new_messages.append(HumanMessage(content=state.get("user_query", "")))
 
-    response = llm_with_tools.invoke(messages)
-    return {"messages": [response]}   # add_messages reducer 自动追加
+    response = llm_with_tools.invoke(history + new_messages)
+    return {"messages": new_messages + [response]}   # add_messages reducer 自动追加
 
 
 def extract_reactive_response(state: InvestAgentState) -> dict:
