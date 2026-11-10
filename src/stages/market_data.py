@@ -92,7 +92,14 @@ def make_tools_node(tools):
 def make_finalize_node(max_output_retries: int):
     def finalize(state: MarketDataState) -> dict:
         try:
-            answer = MarketDataAnswer.model_validate_json(state["messages"][-1].content)
+            content = state["messages"][-1].content
+            # Accept a complete Markdown JSON fence, while keeping JSON parsing strict.
+            if isinstance(content, str):
+                content = content.strip()
+                lines = content.splitlines()
+                if len(lines) >= 3 and lines[0].lower() in {"```json", "```"} and lines[-1] == "```":
+                    content = "\n".join(lines[1:-1])
+            answer = MarketDataAnswer.model_validate(json.loads(content))
             evidence = state["evidence"] + state.get("existing_evidence", [])
             ids = {item["tool_call_id"] for item in evidence}
             if not set(answer.evidence_ids) <= ids:
@@ -106,10 +113,20 @@ def make_finalize_node(max_output_retries: int):
                 for item in result.evidence)
             return {"result": result.model_dump(), "error": None,
                     "status": "partial" if degraded or answer.missing_information else "completed"}
-        except (ValidationError, ValueError, TypeError, KeyError):
+        except (ValidationError, ValueError, TypeError, KeyError) as exc:
+            if isinstance(exc, ValidationError):
+                reason = json.dumps([{"field": ".".join(map(str, e["loc"])), "type": e["type"]}
+                                     for e in exc.errors()], ensure_ascii=False)
+            elif isinstance(exc, json.JSONDecodeError):
+                reason = "不是完整合法的 JSON"
+            elif isinstance(exc, ValueError):
+                reason = str(exc)
+            else:
+                reason = "输出字段或类型不正确"
+            available = [item.get("tool_call_id") for item in state["evidence"] + state.get("existing_evidence", [])]
             if state["output_retries"] < max_output_retries:
                 return {"output_retries": state["output_retries"] + 1,
-                        "messages": [HumanMessage(content="输出验证失败。请按系统 JSON schema 修正，证据 ID 只能引用实际返回的工具或已有证据；无证据须说明缺失信息。")],
+                        "messages": [HumanMessage(content=f"输出验证失败：{reason}。可用证据 ID：{json.dumps(available, ensure_ascii=False)}。请按系统 JSON schema 修正，仅输出完整 JSON；无证据须说明缺失信息。")],
                         "status": "running"}
             return failure("invalid_output", "输出格式或证据引用验证失败。")
     return finalize

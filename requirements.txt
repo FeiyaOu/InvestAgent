@@ -23,7 +23,7 @@ akshare>=1.12
 pandas>=2.0,<3.0
 
 # Streamlit — UI
-streamlit>=1.35
+streamlit>=1.49
 
 # Environment variable loading
 python-dotenv>=1.0

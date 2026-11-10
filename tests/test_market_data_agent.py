@@ -137,3 +137,18 @@ def test_mock_and_fallback_results_are_partial(monkeypatch):
     _, result, _ = run([call(), answer()])
     assert result["status"] == "partial"
     assert result["result"]["evidence"][0]["data_mode"] == "mock"
+
+
+def test_markdown_fenced_json_is_accepted():
+    response = answer()
+    response.content = '```json\n' + response.content + '\n```'
+    _, result, _ = run([call(), response])
+    assert result["status"] == "completed"
+
+
+def test_output_repair_receives_actual_evidence_ids_and_reason():
+    _, result, llm = run([call(), answer(evidence_ids=["wrong"]), answer()])
+    assert result["status"] == "completed"
+    feedback = llm.invoke.call_args.args[0][-1].content
+    assert "c1" in feedback
+    assert "未知" in feedback

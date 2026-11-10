@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -25,9 +26,9 @@ st.set_page_config(page_title="InvestAgent — 投研工作台", page_icon="📊
 # Invalidate session objects from the old dual-path UI on hot reload.
 if st.session_state.get("ui_version") != 2:
     st.session_state.update(ui_version=2, conversation_history=[], last_result=None,
-                            execution_events=[], report_progress={}, turn_count=0)
+                            execution_events=[], report_progress={}, debug_events=[], turn_count=0)
 for key, default in {"conversation_history": [], "last_result": None, "execution_events": [],
-                     "report_progress": {}, "turn_count": 0, "query_input": ""}.items():
+                     "report_progress": {}, "debug_events": [], "turn_count": 0, "query_input": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = default
 if "use_real_data" not in st.session_state:
@@ -53,9 +54,62 @@ def _render_tasks(state):
              "状态": records.get(t["task_id"], {}).get("status", "pending")}
             for t in plan.get("tasks", [])]
     if rows:
-        st.dataframe(rows, hide_index=True, use_container_width=True)
+        st.dataframe(rows, hide_index=True, width="stretch")
     else:
         st.info("尚无可执行任务。")
+
+
+def _debug_details(values):
+    """Copy only observable node output; exclude provider metadata and report text."""
+    details = {key: values[key] for key in (
+        "plan", "planning_status", "planning_attempts", "planning_error",
+        "last_task_id", "supervisor_status", "supervisor_error", "tool_rounds",
+        "tool_calls_used", "output_retries", "status", "error",
+    ) if key in values}
+    if "messages" in values:
+        details["messages"] = []
+        for msg in values["messages"]:
+            role = getattr(msg, "type", "unknown")
+            if role == "system":
+                continue
+            item = {"role": role, "content": getattr(msg, "content", "")}
+            if getattr(msg, "tool_calls", None):
+                item["tool_calls"] = msg.tool_calls
+            if getattr(msg, "tool_call_id", None):
+                item["tool_call_id"] = msg.tool_call_id
+            details["messages"].append(item)
+    result = values.get("result")
+    if isinstance(result, dict) and "answer" in result and "evidence_ids" in result:
+        details["validated_result"] = {key: result.get(key) for key in ("answer", "evidence_ids", "missing_information")}
+    if "task_results" in values:
+        details["tasks"] = [{"task_id": ident, "category": r["category"], "depends_on": r["depends_on"],
+                             "status": r["status"], "error": r.get("error")}
+                            for ident, r in values["task_results"].items()]
+    return details
+
+
+def _render_debug(state, debug):
+    with st.expander("Planner · 完整计划与规划状态", expanded=True):
+        st.write({key: state.get(key) for key in ("planning_status", "planning_attempts", "planning_error")})
+        if state.get("plan"):
+            st.json(state["plan"], expanded=True)
+        else:
+            st.info("等待 Planner 返回计划。")
+    with st.expander("Supervisor · 调度与结果收集", expanded=True):
+        st.caption("当前顺序调度；以下记录显示任务开始、依赖及终止结果。")
+        for event in debug:
+            if event["node"] == "task_started" or event["details"].get("tasks") is not None:
+                st.json(event)
+    with st.expander("Market Data · 模型输出、工具批次与校验", expanded=True):
+        st.caption("同一条 AI 消息里的多个 tool_calls 是同轮批次，可由 ToolNode 并行执行；跨消息批次为后续轮次。时间为收到节点事件的时间，不代表单个工具开始或结束时间。")
+        found = False
+        for event in debug:
+            if event.get("category") == "market_data" and event["node"] in {"initialize", "agent", "tools", "finalize"}:
+                found = True
+                st.markdown(f"**{event['task_id']} · {event['node']} · 事件 {event['step']}**")
+                st.json(event, expanded=True)
+        if not found:
+            st.info("暂无 Market Data 内部事件；需运行新请求采集。")
 
 
 def _render_results(state, progress):
@@ -82,6 +136,8 @@ def _render_results(state, progress):
         found = False
         for ident, record in records.items():
             payload = record.get("result") or {}
+            if record.get("error"):
+                st.error(f"{ident} [{record['error']['type']}]：{record['error']['message']}")
             if record["category"] == "market_data":
                 found = True
                 st.markdown(f"**{ident} · {record['question']}**")
@@ -129,9 +185,9 @@ with st.sidebar:
     st.caption(f"数据模式：{data_mode()}")
     st.caption("没有 checkpoint 自动记忆；每轮显式传入最近三轮会话摘要。")
     st.caption("摘要只在当前 Streamlit 会话内保留，刷新或服务重启后可能丢失。")
-    if st.button("🔄 新对话", use_container_width=True):
+    if st.button("🔄 新对话", width="stretch"):
         st.session_state.update(conversation_history=[], last_result=None, execution_events=[],
-                                report_progress={}, turn_count=0)
+                                report_progress={}, debug_events=[], turn_count=0)
         st.rerun()
     st.caption(f"已完成 {st.session_state['turn_count']} 轮")
 
@@ -147,10 +203,10 @@ examples = [("行情查询", "茅台和五粮液最新价格是多少？"),
             ("生成报告", "请生成新能源行业未来一年的投研报告，重点关注光伏。"),
             ("混合任务", "查询茅台价格，比较与五粮液的估值，并分析未来一年投资机会。")]
 for col, (label, query) in zip(st.columns(3), examples):
-    if col.button(label, use_container_width=True):
+    if col.button(label, width="stretch"):
         st.session_state["query_input"] = query
 user_query = st.text_area("您想研究什么？", key="query_input", height=110)
-run_btn = st.button("🚀 运行研究任务", type="primary", use_container_width=True)
+run_btn = st.button("🚀 运行研究任务", type="primary", width="stretch")
 st.caption("报告主题、行业和时间范围请直接写入问题；目前不提供未绑定任务的全局报告参数。")
 answer_tab, data_tab, analysis_tab, report_tab, trace_tab = st.tabs(
     ["回答", "数据与证据", "分析与策略", "节点结果", "执行记录"])
@@ -166,6 +222,7 @@ if run_btn and user_query.strip():
                            for turn in history)
     initial = create_parent_state(user_query, conversation_context=summary)
     current, progress, events = dict(initial), {}, []
+    debug = []
     active_task = None
     active_category = None
     config = {}
@@ -177,6 +234,7 @@ if run_btn and user_query.strip():
     except Exception:
         pass
     with trace_tab:
+        debug_slot = st.empty()
         status = st.status("研究任务运行中…", expanded=True)
     try:
         graph = create_invest_agent()
@@ -185,6 +243,9 @@ if run_btn and user_query.strip():
             if mode == "custom":
                 if update.get("event") == "task_started":
                     active_task, active_category = update["task_id"], update["category"]
+                    debug.append({"step": len(debug) + 1, "node": "task_started", "task_id": active_task,
+                                  "category": active_category, "details": update,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
                 continue
             for node, values in update.items():
                 if not isinstance(values, dict):
@@ -198,6 +259,13 @@ if run_btn and user_query.strip():
                     fields = {key: values[key] for key in _REPORT_FIELDS if key in values}
                     if fields:
                         progress.setdefault(active_task, {}).update(fields)
+                detail = _debug_details(values)
+                if detail:
+                    debug.append({"step": len(debug) + 1, "node": node,
+                                  "task_id": active_task if namespace else None,
+                                  "category": active_category if namespace else None,
+                                  "scope": "/".join(namespace) or "parent", "details": detail,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
                 events.append({"step": len(events) + 1, "node": node,
                                "task_id": active_task or "", "scope": "/".join(namespace) or "parent"})
             # Render each view in its own replaceable tab container.
@@ -205,6 +273,8 @@ if run_btn and user_query.strip():
             answer_tab, data_tab, analysis_tab, report_tab = [c.container() for c in containers]
             _render_results(current, progress)
             answer_tab, data_tab, analysis_tab, report_tab = old_tabs
+            with debug_slot.container():
+                _render_debug(current, debug)
             with status:
                 _render_tasks(current)
         status.update(label="研究执行结束", state="error" if current.get("supervisor_status") == "failed"
@@ -212,7 +282,7 @@ if run_btn and user_query.strip():
     except Exception:
         current.update(final_response="运行异常，已保留本轮可用任务结果，请重试。", composition_status="failed")
         status.update(label="研究执行异常", state="error")
-    st.session_state.update(last_result=current, report_progress=progress, execution_events=events,
+    st.session_state.update(last_result=current, report_progress=progress, execution_events=events, debug_events=debug,
                             turn_count=st.session_state["turn_count"] + 1)
     st.session_state["conversation_history"].append({"query": user_query.strip(),
         "response_preview": (current.get("final_response") or "")[:1200],
@@ -225,9 +295,10 @@ state = st.session_state.get("last_result") or {}
 # Initial run renders here; streaming uses the same view functions.
 _render_results(state, st.session_state["report_progress"])
 with trace_tab:
+    _render_debug(state, st.session_state["debug_events"])
     _render_tasks(state)
     for key in ("planning_error", "supervisor_error", "composition_error"):
         if state.get(key):
             st.error(state[key]["message"])
     if st.session_state["execution_events"]:
-        st.dataframe(st.session_state["execution_events"], hide_index=True, use_container_width=True)
+        st.dataframe(st.session_state["execution_events"], hide_index=True, width="stretch")

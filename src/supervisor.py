@@ -13,7 +13,7 @@ from src.planner_schemas import TaskPlan
 from src.report_graph import create_report_graph
 from src.stages.reporter import validate_report
 from src.supervisor_state import ReportParameters, SupervisorState
-from src.task_contracts import TaskResult
+from src.task_contracts import TaskResult, TaskError
 
 
 def _error(kind, message):
@@ -40,7 +40,11 @@ def _market_result(raw):
     if not isinstance(raw, dict) or raw.get("status") not in {"completed", "partial", "failed"}:
         raise ValueError("Invalid market-data response")
     if raw["status"] == "failed":
-        return "failed", None, _error("specialist_failed", "数据查询失败。")
+        try:
+            error = TaskError.model_validate(raw.get("error")).model_dump()
+        except ValidationError:
+            error = _error("specialist_failed", "数据查询失败。")
+        return "failed", None, error
     result = MarketDataResult.model_validate(raw.get("result")).model_dump()
     return raw["status"], result, None
 
@@ -93,7 +97,9 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None):
             return {"supervisor_status": "failed",
                     "supervisor_error": _error("scheduler_stalled", "任务依赖无法推进。")}
         ident, category = task["task_id"], task["category"]
-        get_stream_writer()({"event": "task_started", "task_id": ident, "category": category})
+        get_stream_writer()({"event": "task_started", "task_id": ident, "category": category,
+                             "question": task["question"], "depends_on": task["depends_on"],
+                             "dependency_statuses": {dep: results[dep]["status"] for dep in task["depends_on"]}})
         status, result, error = "failed", None, None
         blocked = [dep for dep in task["depends_on"] if results[dep]["status"] not in {"completed", "partial"}]
         if blocked:

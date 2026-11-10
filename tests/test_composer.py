@@ -123,3 +123,13 @@ def test_invalid_result_identity_is_rejected_before_model_call():
         result = composer(broken)
     assert result["composition_error"]["type"] == "invalid_task_results"
     factory.assert_not_called()
+
+
+def test_failed_task_error_is_displayed_without_model():
+    broken = record(status="failed", result={})
+    broken["error"] = {"type": "invalid_output", "message": "输出格式或证据引用验证失败。"}
+    with patch("src.stages.composer._create_chain") as factory:
+        result = composer(state(broken))
+    assert "invalid_output" in result["final_response"]
+    assert "证据引用" in result["final_response"]
+    factory.assert_not_called()

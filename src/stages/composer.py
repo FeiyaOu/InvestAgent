@@ -37,6 +37,9 @@ def _public_records(records):
                          for key in ("answer", "missing_information", "evidence")})
         elif record.get("category") == "report":
             item["notice"] = "报告正文暂时隐藏，请查看节点结果。"
+        # Only forward structured application errors, never raw provider exceptions.
+        if record.get("error"):
+            item["error"] = record["error"]
         public.append(item)
     return public
 
@@ -49,6 +52,8 @@ def _details(records):
         lines = [f"**任务 {item['task_id']} · {item['category']}：{label}**", str(item.get("question") or "")]
         if item.get("answer"):
             lines.append(item["answer"])
+        if item.get("error"):
+            lines.append(f"原因 [{item['error']['type']}]：{item['error']['message']}")
         if item.get("notice"):
             lines.append(item["notice"])
         if item.get("missing_information"):

@@ -118,3 +118,28 @@ def test_real_parent_stream_drives_ui_with_mocked_specialists():
     assert at.session_state["last_result"]["task_results"]["m"]["status"] == "completed"
     assert "实际父图100元" in at.session_state["last_result"]["final_response"]
     assert "messages" not in at.session_state["last_result"]
+
+
+def test_debug_views_show_plan_dispatch_and_market_tool_calls():
+    from langchain_core.messages import AIMessage, ToolMessage
+    graph = fake()
+    events = list(graph.stream.return_value)
+    events[2:2] = [
+        (("supervisor:s", "market:m"), "updates", {"agent": {"messages": [AIMessage(content="", tool_calls=[
+            {"name": "get_stock_performance", "args": {"query": "茅台"}, "id": "c1"},
+            {"name": "get_stock_performance", "args": {"query": "五粮液"}, "id": "c2"}])]}}),
+        (("supervisor:s", "market:m"), "updates", {"tools": {"messages": [
+            ToolMessage(content="茅台100元", tool_call_id="c1")], "tool_rounds": 1, "tool_calls_used": 2}}),
+        (("supervisor:s", "market:m"), "updates", {"finalize": {"status": "completed", "result": {"answer": "100元"}}}),
+    ]
+    graph.stream.return_value = iter(events)
+    at = submit(graph)
+    trace = at.session_state["debug_events"]
+    tool_request = next(e for e in trace if e["node"] == "agent")
+    assert len(tool_request["details"]["messages"][0]["tool_calls"]) == 2
+    assert "五粮液" in str(tool_request)
+    assert any(e["details"].get("tool_rounds") == 1 for e in trace)
+    assert any("Planner" in e.label for e in at.expander)
+    assert any("Supervisor" in e.label for e in at.expander)
+    assert any("Market Data" in e.label for e in at.expander)
+    assert "messages" not in at.session_state["last_result"]

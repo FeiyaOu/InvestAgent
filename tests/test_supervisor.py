@@ -157,3 +157,10 @@ def test_actual_subgraphs_can_execute_with_nested_config(valid_report):
     assert results[-1]["r"]["status"] == "completed"
     assert results[-1]["r2"]["status"] == "completed"
     assert any(namespace and "perception" in update for namespace, update in events)
+
+
+def test_market_failure_preserves_safe_error_code():
+    graph, _, _ = build(market_output={"status": "failed", "result": None,
+        "error": {"type": "invalid_output", "message": "输出格式或证据引用验证失败。"}})
+    result = graph.invoke({"plan": plan(task("a"))})
+    assert result["task_results"]["a"]["error"]["type"] == "invalid_output"
