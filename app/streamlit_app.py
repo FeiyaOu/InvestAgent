@@ -52,7 +52,7 @@ def _configured_use_real_data() -> bool:
 # ============================================================
 
 st.set_page_config(
-    page_title="InvestAgent — 混合型智能投研助手",
+    page_title="InvestAgent — 投研工作台",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -158,20 +158,19 @@ with st.sidebar:
         st.session_state["last_result"] = None
         st.session_state["last_query"] = ""
         st.session_state["last_eval_results"] = None
+        st.session_state["execution_events"] = []
         st.rerun()
 
     st.divider()
     st.markdown("**关于本项目**")
     st.markdown("""
-InvestAgent 演示 LangGraph 混合型 Agent：
+投研工作台展示数据证据、专家分析与报告。
 
-- **有向环①**：Reactive 工具调用循环
-- **有向环②**：Validator 重试路由
-- **MemorySaver**：多轮对话状态持久化
-- **条件边**：assess 节点动态路由
-- **AKShare**：真实 A 股市场数据
+- 普通问题：数据查询、分析、策略与风险
+- 报告请求：完整研究与报告校验
+- 当前引擎：原有双路径流程
 
-**技术栈：** LangGraph · LangChain · Pydantic · AKShare
+会话内结果保留在内存中，刷新或服务重启后可能丢失。
     """)
 
     st.divider()
@@ -194,8 +193,12 @@ InvestAgent 演示 LangGraph 混合型 Agent：
 # 主页面
 # ============================================================
 
-st.title("📊 InvestAgent — 混合型智能投研助手")
-st.caption("LangGraph Hybrid Agent · Reactive + Deliberative · MemorySaver 多轮对话 · AKShare 市场数据")
+st.title("📊 InvestAgent · 投研工作台")
+st.caption("查数据 · 做分析 · 比较策略 · 生成报告")
+st.info("界面已按新工作流组织；任务拆解、Supervisor 专家调度与独立报告子图尚未接入。当前运行仍使用原有双路径引擎，分析问题也可能生成报告。")
+with st.expander("工作流设计"):
+    st.markdown("问题拆解 → Supervisor 调度 → 数据查询 / 量化分析 / 策略与风险 → 汇总回答。明确要求报告时，进入报告子图。")
+    st.caption("新流程接入后，同一请求可包含多个任务，已完成的答案先展示，其他任务继续执行。")
 
 # ---- 对话历史面板 ----
 if st.session_state["conversation_history"]:
@@ -215,16 +218,16 @@ st.markdown("**快速示例：**")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    if st.button("⚡ 简单查询", use_container_width=True):
+    if st.button("行情查询", use_container_width=True):
         st.session_state["query_input"] = "今天新能源板块行情如何？"
 
 with col2:
-    if st.button("🔬 深度研究", use_container_width=True):
-        st.session_state["query_input"] = "请深度分析新能源行业的中期投资机会"
+    if st.button("生成报告", use_container_width=True):
+        st.session_state["query_input"] = "请生成一份新能源行业未来一年的投资研究报告，重点关注光伏板块。"
 
 with col3:
-    if st.button("📈 行业分析", use_container_width=True):
-        st.session_state["query_input"] = "光伏行业当前是否具备投资价值？请给出详细分析"
+    if st.button("比较与分析", use_container_width=True):
+        st.session_state["query_input"] = "茅台和五粮液现在什么价格？比较它们的估值，并分析未来一年的投资机会。"
 
 with col4:
     # 追问按钮：只有在有历史时才有意义
@@ -237,9 +240,9 @@ st.divider()
 
 # ---- 输入区 ----
 user_query = st.text_area(
-    "输入您的查询",
-    height=80,
-    placeholder="例如：请分析新能源行业的中期投资机会，重点关注光伏板块...",
+    "您想研究什么？",
+    height=110,
+    placeholder="可以询问行情、比较估值、分析风险；需要完整报告时，请明确写出生成投研报告。",
     key="query_input",
 )
 
@@ -252,7 +255,43 @@ with st.expander("⚙️ 高级选项（可选）"):
     with col_c:
         time_horizon = st.selectbox("时间范围", ["中期", "短期", "长期"])
 
-run_btn = st.button("🚀 运行 InvestAgent", type="primary", use_container_width=True)
+run_btn = st.button("🚀 运行研究任务", type="primary", use_container_width=True)
+
+# 临时展示开关：只影响 UI，不改变报告生成和校验流程。
+_SHOW_FINAL_REPORT = False
+
+
+def _render_node_results(state: dict) -> None:
+    """完整展示节点输出，不截断字段、不依赖报告是否生成成功。"""
+    for key in ("perception_data", "world_model", "reasoning_plans", "selected_plan"):
+        st.subheader(key)
+        value = state.get(key)
+        if value is None:
+            st.info("尚未返回结果。")
+        else:
+            st.json(value, expanded=True)
+
+
+# 结果容器在执行前创建，流式结果写入对应视图。
+answer_tab, data_tab, analysis_tab, report_tab, trace_tab = st.tabs(
+    ["回答", "数据与证据", "分析与策略", "节点结果", "执行记录"]
+)
+with answer_tab:
+    live_answer = st.empty()
+with data_tab:
+    live_data = st.empty()
+with analysis_tab:
+    live_analysis = st.empty()
+with report_tab:
+    live_report = st.empty()
+with trace_tab:
+    live_trace = st.container()
+
+if not st.session_state.get("last_result"):
+    live_answer.info("提交一个问题开始研究。完成的回答会在这里展示。")
+    live_data.info("尚无数据。运行后展示引擎实际返回的感知数据；历史价格与量化数据集待接入。")
+    live_analysis.info("尚无分析。这里展示市场模型、候选策略与决策依据。")
+    live_report.info("深度研究运行后，这里直接展示四个节点的完整输出；最终报告暂时隐藏。")
 
 # ============================================================
 # 运行 Agent — 使用 LangGraph stream() 实时展示每个节点进度
@@ -314,15 +353,30 @@ if run_btn and user_query.strip():
         pass
 
     _mode_label = "真实 AKShare 数据" if data_mode() == "real" else "模拟 mock 数据"
-    with st.status(f"InvestAgent 运行中（第{turn_num}轮）· {_mode_label}...", expanded=True) as status:
+    with live_trace.status(f"InvestAgent 运行中（第{turn_num}轮）· {_mode_label}...", expanded=True) as status:
         try:
             agent = create_invest_agent()
             accumulated_state = dict(initial_state)
+            execution_events = []
 
             for chunk in agent.stream(initial_state, config=config):
                 node_name = list(chunk.keys())[0]
                 state_update = chunk[node_name]
                 accumulated_state.update(state_update)
+                execution_events.append({"step": len(execution_events) + 1, "node": node_name,
+                                         "status": "失败" if state_update.get("error") else "已返回"})
+                if state_update.get("final_response"):
+                    live_answer.markdown(state_update["final_response"])
+                if state_update.get("perception_data"):
+                    live_data.json(state_update["perception_data"])
+                for field in ("world_model", "reasoning_plans", "selected_plan"):
+                    if state_update.get(field):
+                        live_analysis.json(state_update[field])
+                if any(key in state_update for key in ("perception_data", "world_model", "reasoning_plans", "selected_plan")):
+                    with live_report.container():
+                        _render_node_results(accumulated_state)
+                if state_update.get("error"):
+                    live_answer.error(state_update["error"])
 
                 label = _NODE_LABELS.get(node_name, f"执行节点: {node_name}")
 
@@ -355,7 +409,11 @@ if run_btn and user_query.strip():
             # chunk 只含各节点的增量，messages 由 add_messages reducer 追加，dict.update 会覆盖成最后一批；
             # 从 checkpointer 取 reducer 合并后的完整 state
             final_state = {**accumulated_state, **agent.get_state(config).values}
-            status.update(label="✅ 运行完成", state="complete", expanded=False)
+            st.session_state["execution_events"] = execution_events
+            status.update(
+                label="研究未完成" if final_state.get("error") else "运行完成",
+                state="error" if final_state.get("error") else "complete", expanded=False,
+            )
 
         except Exception as e:
             status.update(label=f"❌ 运行出错: {e}", state="error")
@@ -397,47 +455,58 @@ if st.session_state.get("last_result"):
     final_state = st.session_state["last_result"]
     processing_mode = final_state.get("processing_mode", "unknown")
 
-    st.divider()
-    st.markdown(
-        f"**第 {st.session_state['turn_count']} 轮结果** · "
-        f"路由模式：`{processing_mode}` · "
-        f"Q: *{st.session_state.get('last_query', '')[:50]}*"
-    )
-
-    if processing_mode == "reactive":
-        st.subheader("⚡ 快速回答（Reactive 路径）")
-        final_response = final_state.get("final_response", "")
-        if final_response:
-            st.success(final_response)
-        else:
-            st.warning("未能获取回答，请重试。")
-
-        with st.expander("🔍 消息历史"):
+    if final_state.get("error"):
+        with answer_tab:
+            st.error(final_state["error"])
+    with trace_tab:
+        st.caption(f"当前引擎路径：{processing_mode} · 会话 {st.session_state['thread_id'][:8]}")
+        if st.session_state.get("execution_events"):
+            st.dataframe(st.session_state["execution_events"], hide_index=True, use_container_width=True)
+        with st.expander("消息与工具调用"):
             for msg in final_state.get("messages", []):
-                role = type(msg).__name__
-                content = getattr(msg, "content", str(msg))
-                st.markdown(f"**{role}:** {content}")
+                st.write(f"{type(msg).__name__}: {getattr(msg, 'content', '')}")
+                if getattr(msg, "tool_calls", None):
+                    st.json(msg.tool_calls)
 
-    else:
-        st.subheader("🔬 深度研究报告（Deliberative 路径）")
+    with answer_tab:
+        st.caption(f"第 {st.session_state['turn_count']} 轮 · {st.session_state.get('last_query', '')}")
+        if final_state.get("final_response"):
+            st.markdown(final_state["final_response"])
+        elif final_state.get("selected_plan"):
+            st.markdown(final_state["selected_plan"].get("investment_thesis", ""))
+            st.caption("以上为决策摘要。四个节点的完整输出见「节点结果」；最终报告暂时隐藏。")
+        elif not final_state.get("error"):
+            st.info("本轮未返回可展示的回答。")
 
-        if final_state.get("error"):
-            st.warning(f"⚠️ {final_state['error']}")
+    if not final_state.get("perception_data"):
+        with data_tab:
+            st.info("本轮没有结构化证据输出。数据查询的工具原文可在执行记录中查看。")
+    if not any(final_state.get(k) for k in ("world_model", "reasoning_plans", "selected_plan")):
+        with analysis_tab:
+            st.info("本轮没有独立分析结果；量化分析工具尚未接入。")
+    with report_tab:
+        st.caption("临时调试视图：完整展示中间结果，最终报告与报告评估暂时隐藏。")
+        _render_node_results(final_state)
 
-        # 5阶段进度
-        stage_names = ["感知", "建模", "推理", "决策", "报告"]
-        stage_keys = ["perception_data", "world_model", "reasoning_plans", "selected_plan", "final_report"]
-        cols = st.columns(5)
-        for col, name, key in zip(cols, stage_names, stage_keys):
-            with col:
-                (st.success if final_state.get(key) else st.error)(f"{'✓' if final_state.get(key) else '✗'} {name}")
-
-        st.divider()
-
+    with data_tab:
         if final_state.get("perception_data"):
-            with st.expander("📡 阶段1：感知数据"):
-                st.json(final_state["perception_data"])
+            evidence = final_state["perception_data"]
+            st.subheader("市场证据")
+            st.caption("当前为模型整理的数据摘要；来源、时间戳与原始数据集将随新工具接入。")
+            st.markdown(evidence.get("market_overview", ""))
+            if evidence.get("key_indicators"):
+                st.dataframe(
+                    [{"指标": key, "说明": value} for key, value in evidence["key_indicators"].items()],
+                    hide_index=True, use_container_width=True,
+                )
+            if evidence.get("recent_news"):
+                st.markdown("**近期消息**")
+                for news in evidence["recent_news"]:
+                    st.write(news)
+            with st.expander("原始阶段输出"):
+                st.json(evidence)
 
+    with analysis_tab:
         if final_state.get("world_model"):
             with st.expander("🌍 阶段2：市场内部模型"):
                 wm = final_state["world_model"]
@@ -463,10 +532,13 @@ if st.session_state.get("last_result"):
                 st.info(sp.get("investment_thesis", ""))
                 st.markdown(f"**建议：** {sp.get('recommendation','N/A')} · **时间框架：** {sp.get('timeframe','N/A')}")
 
-        if final_state.get("final_report"):
+    with report_tab:
+        if _SHOW_FINAL_REPORT and final_state.get("final_report"):
             st.subheader("📄 最终投研报告")
             try:
                 report = json.loads(final_state["final_report"])
+                st.download_button("下载报告 JSON", data=json.dumps(report, ensure_ascii=False, indent=2),
+                                   file_name="investment_report.json", mime="application/json")
                 errors = validate_report(report)
                 if errors:
                     st.warning(f"⚠️ {len(errors)} 个质量问题：{[e['type'] for e in errors]}")
@@ -508,48 +580,49 @@ if st.session_state.get("last_result"):
     # ============================================================
     # 评估面板（OpenEvals，点击后按需运行）
     # ============================================================
-    if final_state.get("final_report"):
-        st.divider()
-        st.subheader("📊 质量评估（OpenEvals）")
-        st.caption("使用 Qwen 作为评判 LLM，评估报告的相关性、幻觉程度和投资论点质量")
+    with report_tab:
+        if _SHOW_FINAL_REPORT and final_state.get("final_report"):
+            st.divider()
+            st.subheader("📊 质量评估（OpenEvals）")
+            st.caption("使用 Qwen 作为评判 LLM，评估报告的相关性、幻觉程度和投资论点质量")
 
-        eval_col1, eval_col2 = st.columns([1, 3])
-        with eval_col1:
-            run_eval_btn = st.button("▶ 运行评估", use_container_width=True,
-                                     help="需要 DASHSCOPE_API_KEY（约需10-20秒）")
-        with eval_col2:
-            if not os.getenv("DASHSCOPE_API_KEY"):
-                st.warning("需要 DASHSCOPE_API_KEY 才能运行评估")
+            eval_col1, eval_col2 = st.columns([1, 3])
+            with eval_col1:
+                run_eval_btn = st.button("▶ 运行评估", use_container_width=True,
+                                         help="需要 DASHSCOPE_API_KEY（约需10-20秒）")
+            with eval_col2:
+                if not os.getenv("DASHSCOPE_API_KEY"):
+                    st.warning("需要 DASHSCOPE_API_KEY 才能运行评估")
 
-        if run_eval_btn:
-            from src.evaluation.openevals_eval import run_openevals
+            if run_eval_btn:
+                from src.evaluation.openevals_eval import run_openevals
 
-            with st.spinner("OpenEvals 评估中（Qwen-as-judge）..."):
-                eval_results = run_openevals(final_state)
-                st.session_state["last_eval_results"] = eval_results
+                with st.spinner("OpenEvals 评估中（Qwen-as-judge）..."):
+                    eval_results = run_openevals(final_state)
+                    st.session_state["last_eval_results"] = eval_results
 
-        # 显示评估结果
-        if st.session_state.get("last_eval_results"):
-            er = st.session_state["last_eval_results"]
-            ec1, ec2, ec3 = st.columns(3)
+            # 显示评估结果
+            if st.session_state.get("last_eval_results"):
+                er = st.session_state["last_eval_results"]
+                ec1, ec2, ec3 = st.columns(3)
 
-            def _score_display(result: dict, label: str, col):
-                score = result.get("score")
-                with col:
-                    if score is None:
-                        st.metric(label, "N/A")
-                        st.caption(result.get("reasoning", "")[:100])
-                    else:
-                        score_pct = f"{score:.0%}" if isinstance(score, float) else str(score)
-                        color = "🟢" if isinstance(score, float) and score >= 0.7 else (
-                            "🟡" if isinstance(score, float) and score >= 0.4 else "🔴"
-                        )
-                        st.metric(label, f"{color} {score_pct}")
-                        with st.expander("评审理由"):
-                            st.write(result.get("reasoning", ""))
+                def _score_display(result: dict, label: str, col):
+                    score = result.get("score")
+                    with col:
+                        if score is None:
+                            st.metric(label, "N/A")
+                            st.caption(result.get("reasoning", "")[:100])
+                        else:
+                            score_pct = f"{score:.0%}" if isinstance(score, float) else str(score)
+                            color = "🟢" if isinstance(score, float) and score >= 0.7 else (
+                                "🟡" if isinstance(score, float) and score >= 0.4 else "🔴"
+                            )
+                            st.metric(label, f"{color} {score_pct}")
+                            with st.expander("评审理由"):
+                                st.write(result.get("reasoning", ""))
 
-            _score_display(er.get("answer_relevance", {}), "回答相关性", ec1)
-            _score_display(er.get("hallucination", {}),    "幻觉程度↓", ec2)
-            _score_display(er.get("thesis_quality", {}),   "投资论点质量", ec3)
+                _score_display(er.get("answer_relevance", {}), "回答相关性", ec1)
+                _score_display(er.get("hallucination", {}),    "幻觉程度↓", ec2)
+                _score_display(er.get("thesis_quality", {}),   "投资论点质量", ec3)
 
-            st.caption("注：幻觉程度分数越低越好（0=无幻觉，1=大量虚构）")
+                st.caption("注：幻觉程度分数越低越好（0=无幻觉，1=大量虚构）")
