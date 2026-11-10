@@ -155,3 +155,63 @@ JSON 保留作为数据交换与下载格式。
 实现时先写 mock 测试，验证报告分区、图表数据关联、无数据与模拟数据提示、
 纯展示操作不触发重新研究，以及 JSON 下载。
 恢复报告阅读视图后，四节点详情仍需可查看；报告校验仍仅通过 `validate_report()`。
+
+
+## 8. Market Data Agent：独立子图（2026-11-10 已确认并实现首版）
+
+### 8.1 范围
+
+采用显式 LangGraph 子图 + ToolNode 的 ReAct 循环。独立开发、测试和调用，
+尚未接入父图或 UI；原 `perception.py`、报告节点与报告 UI 保持不变。
+首版复用现有五个工具，不引入新的供应商或数据库。
+
+```text
+initialize → agent → tools → agent
+                 └→ finalize → END
+                      └─ 输出校验失败且可重试 → agent
+```
+
+`src/market_data_agent.py` 仅负责编排，模型调用位于 `src/stages/market_data.py`；
+独立状态和 Pydantic 契约位于 `src/market_data_state.py`。
+
+### 8.2 接口与状态
+
+- 构建入口：`create_market_data_agent()`，返回可 invoke / stream 的编译子图。
+- 输入：必填 `task`；可选 `subject`、`time_range`、`existing_evidence`。
+- 状态：局部 messages、工具轮数与调用次数、输出修正次数、工具证据、result、status、error。
+- 输出：`result` 包含 answer、evidence_ids、missing_information、evidence；
+  使用 Pydantic 验证，证据引用必须存在，无证据时必须说明缺失信息。
+- evidence 保留工具原文、名称、调用 ID、采集时间、执行状态、数据模式。
+  已有证据按同一模型验证；采集时间不代表行情发生时间。
+- 旧工具缺乏可靠的结构化来源和行情日期，source_url / as_of_date 默认空；
+  不允许模型补造这些元数据。status=returned 只表示工具返回，不保证数据可用或事实正确。
+- 最终状态：completed / partial / failed；失败时 result 为 None，error 包含 type / message。
+  缺失信息、工具异常、模拟模式或识别到的降级文本导致 partial。
+  降级文本识别为兼容旧接口的启发式检查，不替代未来结构化数据状态。
+
+### 8.3 执行控制
+
+- 默认最多 3 轮工具执行、累计 8 次工具调用；整批调用超预算时不执行该批。
+- 最终 JSON 或证据引用校验失败后，默认最多修正 1 次；预算可由构建参数调整。
+- 工具异常转换为 ToolMessage 供模型处理，模型或未处理工具异常返回失败状态。
+- 复用 LLM 工厂的供应商重试设置；上述预算限制调用数量，不保证总耗时。
+  同步工具的网络超时沿用原实现，本版不提供可强制中断的请求级超时。
+- 不安装私有 checkpointer；独立 invoke 默认相互隔离，未来由父图统一设计持久化边界。
+- graph.stream 提供节点更新，包含局部消息、工具结果与最终状态；前端接线待后续实现。
+
+### 8.4 调用与验收
+
+```python
+from src.market_data_agent import create_market_data_agent
+
+graph = create_market_data_agent()
+state = graph.invoke({"task": "查询茅台最新可用股价", "subject": "茅台"})
+# state["status"] 与 state["error"] 用于失败处理
+# state["result"] 用于展示回答和证据
+```
+
+测试采用 mock 模型与本地测试工具，不访问真实 API。覆盖工具循环、已有证据、
+输出修正与失败、未知证据引用、空任务、工具异常、模拟及降级数据、
+工具预算与多次调用隔离。运行：`pytest tests/test_market_data_agent.py -q`。
+
+历史行情、财务、估值与公告结构化工具、硬超时机制、父图和 UI 整合仍待后续任务。

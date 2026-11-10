@@ -11,6 +11,7 @@
 保留现有报告流程内部代码，封装为报告子图；保留四个中间节点输出 UI；
 数据查询、分析、策略 / 风险 Agent 独立开发后，由父级 Planner / Supervisor 整合。
 报告展示层后续采用 Streamlit + Plotly，复用结构化数据绘图；启用时机与数据规则见演进规格第 7 节。
+Market Data Agent 已实现独立的显式 LangGraph + ToolNode 首版（未接入父图 / UI），接口与限制见 [演进规格第 8 节](workflow-evolution.md#8-market-data-agent独立子图2026-11-10-已确认并实现首版)。
 这是一项待实施的演进决策，本文以下双路径架构仍是当前基线。
 此前讨论的“让报告立即复用新专家”不属于本阶段范围。
 

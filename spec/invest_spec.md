@@ -10,6 +10,7 @@
 见 [工作流演进规格](workflow-evolution.md)：保留现有报告内部实现，未来封装为报告子图；
 保留当前逐节点结果 UI；其他专家 Agent 独立建设后再整合进父图。
 报告阅读视图计划采用 Streamlit + Plotly，结构化文字与真实数据图表结合，详见演进规格第 7 节；当前仍隐藏最终报告。
+Market Data Agent 已实现独立的显式 LangGraph + ToolNode 首版（未接入父图 / UI），接口与限制见 [演进规格第 8 节](workflow-evolution.md#8-market-data-agent独立子图2026-11-10-已确认并实现首版)。
 以下双路径描述为当前运行基线，未来父图的任务路由见该演进规格，尚未实现。
 
 ---
