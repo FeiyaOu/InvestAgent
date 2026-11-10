@@ -12,7 +12,7 @@
 报告阅读视图计划采用 Streamlit + Plotly，结构化文字与真实数据图表结合，详见演进规格第 7 节；当前仍隐藏最终报告。
 Market Data Agent 已实现独立的显式 LangGraph + ToolNode 首版（未接入父图 / UI），接口与限制见 [演进规格第 8 节](workflow-evolution.md#8-market-data-agent独立子图2026-11-10-已确认并实现首版)。
 最新父图方案已确认：Planner → Supervisor → 四类能力（market_data / analytics / investment_strategy / report）→ Composer；
-后续替换旧 Reactive 路径，按阶段建设。详见 [工作流演进规格第 10 节](workflow-evolution.md#10-父图任务规划与调度2026-11-10-已确认待分步实现)。独立 Planner 首版已实现，接口与限制见演进规格第 11 节；未切换入口，下一步建设 Supervisor。
+后续替换旧 Reactive 路径，按阶段建设。详见 [工作流演进规格第 10 节](workflow-evolution.md#10-父图任务规划与调度2026-11-10-已确认待分步实现)。独立 Planner 首版已实现，接口与限制见演进规格第 11 节；未切换入口；独立 Supervisor 也已实现（见演进规格第 12 节），下一步为 Composer 与新父图入口整合。
 以下双路径描述为当前运行基线，未来父图的任务路由见该演进规格，尚未实现。
 
 ---

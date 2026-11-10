@@ -374,3 +374,69 @@ Prompt 要求保留主体与时间范围、利用上下文解析指代、仅明�
 未运行真实模型/API 的语义评估，后续可用固定案例集独立评估规划质量。
 
 下一步仍是独立建设 Supervisor，接入 market_data / report；本轮不提前实施。
+
+
+## 12. 独立 Supervisor 首版（2026-11-10 已实现，未切换入口）
+
+### 12.1 入口与范围
+
+`src/supervisor.py` 提供 `create_supervisor_graph()`，状态定义位于 `src/supervisor_state.py`。
+它是确定性顺序调度子图，不新增 LLM 调用，不自动重新规划，不包含 Planner / Composer。
+已接入独立 market_data 与 report 子图；不修改报告内部代码和旧入口 / UI。
+
+```python
+from src.stages.planner import planner
+from src.supervisor import create_supervisor_graph
+
+planning = planner({"user_query": "查询茅台价格"})
+# failed 时先处理 planning_error；needs_clarification 时先向用户澄清。
+if planning["planning_status"] == "ready":
+    state = create_supervisor_graph().invoke({"plan": planning["plan"]})
+    records = state["task_results"]
+```
+
+每次 initialize 重新验证 TaskPlan，清空旧任务结果。
+无效计划不执行专家；澄清计划直接返回 needs_clarification。
+无私有 checkpointer；未来父图的持久化、任务恢复策略另行接入。
+
+### 12.2 调度、任务结果与状态
+
+- 在计划列表中选择首个所有前置任务已终止的未执行任务，不要求计划预先拓扑排序。
+- completed / partial 前置任务允许继续；failed / unsupported / blocked 前置任务使下游 blocked。
+  partial 允许继续不代表证据充分，结果仍保留缺失信息供后续解释。
+- analytics / investment_strategy 返回 unsupported；不转交其他专家。
+- 每个任务只执行一次，不自动重试；异常作为该任务 failed 收集，独立任务继续运行。
+- task_results 按 task_id 保存原任务字段及 status、result、error；不覆盖共享 final_report。
+- supervisor_status 为 running / completed / partial / failed / needs_clarification。
+  全部任务 completed 才整体 completed；有可用的 completed / partial 结果但非全部成功时为 partial；
+  没有可用结果时为 failed。逐任务 error 是失败详情，supervisor_error 用于计划或调度级错误。
+- 支持最多12个任务，在默认图递归预算内终止；首版不做并行调度。
+
+### 12.3 子图边界适配
+
+Market Data：任务 question 映射到 task；直接依赖的 market_data 证据传入 existing_evidence。
+为避免多个任务的 tool_call_id 冲突，在传入时加前置 task_id 命名空间。
+返回结果用 MarketDataResult 验证，保留子图的 completed / partial / failed 状态。
+
+Report：每次创建全新报告输入，retry_count=0、messages=[]、四阶段结果与报告清空。
+可选 report_parameters 按报告 task_id 提供 research_topic、industry_focus、time_horizon，
+拒绝非报告任务参数和额外字段。缺少参数时 research_topic / industry_focus 沿用完整任务 question，
+时间范围为「按任务描述」；此为保留意图的临时适配，不是准确的行业与时间抽取。
+后续 Planner / 父图整合应细化结构化参数，避免整句作为行业工具查询参数。
+
+报告子图继续自行采集数据；前置任务只控制就绪，不向其内部注入新专家或跳过阶段。
+完整返回状态（包括四节点输出和 final_report）保留在对应任务 result 中。
+报告未完成、已有 error 或 JSON 无效时为 failed；JSON 无效时仍保留节点输出。
+报告正常终止后仅通过 validate_report() 复核；存在约束问题则 partial，不宣称校验通过，
+已有报告错误仍为 failed。不在 Supervisor 复制 C1–C7 约束实现或错误分级规则。
+
+### 12.4 流式与验收边界
+
+图节点为 initialize → supervisor（每次执行一项任务并更新 task_results）→ finish。
+通过 stream(..., subgraphs=True) 可消费子图更新和逐任务结果；尚未接入 Streamlit。
+子图消息与报告全文不自动展示，报告正文隐藏策略仍由未来 Composer / UI 保持。
+
+mock 测试覆盖分类调度、依赖顺序、证据传递、状态隔离、未接入能力、下游阻断、
+局部异常、报告适配与复核、完整12任务终止，以及真实子图结构下的嵌套执行和事件。
+不访问真实模型或行情 API；未新增数据库或强制网络超时。
+下一步为 Composer 与新父图入口整合，本轮不提前实现。
