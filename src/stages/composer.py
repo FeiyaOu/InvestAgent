@@ -4,7 +4,8 @@ import json
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from src.composer_state import ComposedAnswer, ResponseState
+from src.composer_state import ComposedAnswer
+from src.parent_state import ParentState
 from src.llm import FAST_MODEL, create_llm
 from src.task_contracts import validate_task_results
 
@@ -64,10 +65,15 @@ def _details(records):
     return "\n\n---\n\n".join(sections)
 
 
-def composer(state: ResponseState) -> dict:
+def composer(state: ParentState) -> dict:
     """Compose only terminal execution results, with deterministic fallback."""
+    # Planning can terminate before execution; never compose stale task records.
+    if state.get("planning_status") == "failed":
+        return {"final_response": "未能生成任务计划，请检查问题或稍后重试。",
+                "composition_status": "failed",
+                "composition_error": {"type": "planning_failed", "message": "任务规划未完成。"}}
     status = state.get("supervisor_status")
-    if status == "needs_clarification":
+    if state.get("planning_status") == "needs_clarification" or status == "needs_clarification":
         questions = (state.get("plan") or {}).get("clarification_questions", [])
         return {"final_response": "请补充以下信息：\n\n" + "\n\n".join(questions),
                 "composition_status": "needs_clarification", "composition_error": None}

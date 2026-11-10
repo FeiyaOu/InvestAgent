@@ -537,3 +537,57 @@ Planner / Supervisor / Composer 现有节点接口继续使用部分字典状态
 测试覆盖请求隔离、输入复制、状态一致性、失败报告产物保留、结果 key 校验、
 Composer 无效边界处理，以及手动顺序复用 Planner → Supervisor → Composer。
 下一步再基于该契约设计初始化、规划失败/澄清路由与父图接线。
+
+
+## 15. 完整父图接线（2026-11-10 已实现，旧 UI 尚未切换）
+
+### 15.1 独立入口
+
+`src/parent_graph.py` 提供 `create_parent_graph()`，使用 ParentState：
+
+```text
+START → initialize → planner → supervisor → composer → END
+             │           └─ needs_clarification / failed → composer
+             └─ 输入无效 → composer
+```
+
+```python
+from src.parent_graph import create_parent_graph
+
+graph = create_parent_graph()
+state = graph.invoke({
+    "user_query": "查询茅台股价，同时比较它和五粮液的估值",
+    "conversation_context": "",
+})
+print(state["final_response"])
+```
+
+initialize 每次验证请求并重置本轮输出。无效输入转换为 planning_status=failed，
+不调用模型或执行专家；规划失败 / 需要澄清时跳过 Supervisor，Composer 返回相应提示。
+成功规划后通过适配节点执行已有 Supervisor，后者调度 market_data / report；
+analytics / investment_strategy 仍 unsupported。
+
+### 15.2 状态边界
+
+父图只向 Supervisor 传入 plan / report_parameters，
+只接回 task_results / supervisor_status / supervisor_error。
+结果映射经过统一契约验证，并检查任务 ID、分类、问题和依赖与本轮计划一致；
+成功或部分成功的执行必须具有完整任务结果集合。
+边界异常返回 execution_error，不向用户泄漏原始异常。
+
+messages、last_task_id、retry_count、current_phase 等局部字段不进入父级通道，
+报告数据仅保留在对应任务 result，不变成父级 final_report。
+Composer 输入类型同步为 ParentState，确保 LangGraph 不会过滤掉 planning_status。
+当前不设置 checkpoint，不提供自动多轮存储；调用方显式提供对话摘要。
+
+### 15.3 展示与兼容性
+
+graph.stream(..., subgraphs=True) 可观察规划、内部执行、逐任务结果与汇总事件。
+报告正文仍隐藏；原报告节点与四节点结果展示规则不变。
+`src/agent.py`、`create_response_graph()` 与 Streamlit 旧入口继续保留，
+本轮仅新增可独立调用的完整父图，不自动将浏览器页面切换到新流程。
+下一步单独迁移入口 / UI，并同步旧 Reactive 和 C8–C9 的替换策略。
+
+测试使用 mock 模型和子图，覆盖完整请求、上下文传递、混合任务部分成功、
+无效输入、澄清、规划失败、报告隔离、过期结果重置、图复用及嵌套流式事件。
+未运行真实行情或模型 API 的集成评估。
