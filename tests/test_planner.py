@@ -1,0 +1,158 @@
+"""Planner contract and node tests; no external calls."""
+from unittest.mock import Mock, patch
+
+import pytest
+from pydantic import ValidationError
+
+from src.planner_schemas import TaskPlan
+from src.stages.planner import planner
+
+
+def task(ident="t1", category="market_data", deps=None):
+    return {"task_id": ident, "category": category, "question": "查询茅台价格",
+            "depends_on": [] if deps is None else deps}
+
+
+def plan(tasks=None):
+    return {"status": "ready", "tasks": [task()] if tasks is None else tasks,
+            "clarification_questions": []}
+
+
+@pytest.mark.parametrize("tasks", [
+    [task(), task()], [task(deps=["missing"])], [task(deps=["t1"])],
+    [task("a", deps=["b"]), task("b", deps=["a"])],
+    [task(category="reactive")], [task(deps=["t2", "t2"]), task("t2")], [],
+])
+def test_reject_invalid_plans(tasks):
+    with pytest.raises(ValidationError):
+        TaskPlan.model_validate(plan(tasks))
+
+
+def test_four_categories_and_forward_dependencies():
+    tasks = [task("s", "investment_strategy", ["a"]), task("a", "analytics", ["d"]),
+             task("d"), task("r", "report")]
+    result = TaskPlan.model_validate(plan(tasks))
+    assert len(result.tasks) == 4
+
+
+@pytest.mark.parametrize("payload", [
+    {"status": "needs_clarification", "tasks": [task()], "clarification_questions": ["哪个公司？"]},
+    {"status": "needs_clarification", "tasks": [], "clarification_questions": []},
+    {"status": "ready", "tasks": [task()], "clarification_questions": ["哪个公司？"]},
+])
+def test_status_contract(payload):
+    with pytest.raises(ValidationError):
+        TaskPlan.model_validate(payload)
+
+
+def invoke(outputs, state=None, **kwargs):
+    chain = Mock()
+    chain.invoke.side_effect = outputs
+    with patch("src.stages.planner._create_chain", return_value=chain):
+        result = planner({"user_query": "查股价，比较估值并分析一年投资机会", **(state or {})}, **kwargs)
+    return result, chain
+
+
+def test_plans_mixed_query_without_executing_agents():
+    payload = plan([task("d"), task("a", "analytics", ["d"]),
+                    task("s", "investment_strategy", ["a"])])
+    result, chain = invoke([payload])
+    assert result["planning_status"] == "ready"
+    assert result["plan"] == payload
+    assert chain.invoke.call_count == 1
+
+
+def test_report_and_lookup_remain_independent():
+    payload = plan([task("d"), task("r", "report")])
+    result, _ = invoke([payload])
+    assert all(not t["depends_on"] for t in result["plan"]["tasks"])
+
+
+def test_context_and_original_query_reach_model():
+    result, chain = invoke([plan()], {"user_query": "它现在多少钱？", "conversation_context": "此前讨论贵州茅台"})
+    inputs = chain.invoke.call_args.args[0]
+    assert inputs["user_query"] == "它现在多少钱？"
+    assert inputs["conversation_context"] == "此前讨论贵州茅台"
+    assert result["planning_status"] == "ready"
+
+
+def test_clarification_does_not_create_executable_tasks():
+    result, _ = invoke([{"status": "needs_clarification", "tasks": [],
+                         "clarification_questions": ["请问您指哪家公司？"]}])
+    assert result["planning_status"] == "needs_clarification"
+    assert result["plan"]["tasks"] == []
+
+
+def test_invalid_plan_retries_with_validation_feedback():
+    result, chain = invoke([plan([task(deps=["missing"])]), plan()])
+    assert result["planning_status"] == "ready"
+    assert result["planning_attempts"] == 2
+    assert "missing" in chain.invoke.call_args.args[0]["correction"]
+
+
+def test_exhausted_validation_returns_failure_without_plan():
+    result, chain = invoke([{}, {}])
+    assert result["planning_status"] == "failed"
+    assert result["plan"] is None
+    assert result["planning_error"]["type"] == "invalid_plan"
+    assert chain.invoke.call_count == 2
+
+
+def test_provider_failure_is_caught():
+    result, chain = invoke([RuntimeError("secret provider details")])
+    assert result["planning_error"]["type"] == "model_error"
+    assert "secret" not in str(result)
+    assert chain.invoke.call_count == 1
+
+
+def test_empty_input_does_not_call_llm():
+    result, chain = invoke([], {"user_query": " "})
+    assert result["planning_error"]["type"] == "invalid_input"
+    chain.invoke.assert_not_called()
+
+
+def test_contract_rejects_whitespace_and_excess_tasks():
+    payload = plan(); payload["tasks"][0]["question"] = "  "
+    with pytest.raises(ValidationError):
+        TaskPlan.model_validate(payload)
+    with pytest.raises(ValidationError):
+        TaskPlan.model_validate(plan([task(str(i)) for i in range(13)]))
+
+
+def test_real_chain_parses_mock_model_json_and_repairs_malformed_json():
+    import json
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+
+    prompts = []
+    replies = iter(["not json", json.dumps(plan())])
+    def respond(prompt):
+        prompts.append(prompt.to_messages())
+        return AIMessage(content=next(replies))
+    with patch("src.stages.planner.create_llm", return_value=RunnableLambda(respond)):
+        result = planner({"user_query": "茅台现在多少钱？"})
+    assert result["planning_status"] == "ready"
+    assert len(prompts) == 2
+    assert "不是有效 JSON" in prompts[1][-1].content
+    assert "report" in prompts[0][0].content
+
+
+def test_planner_can_be_registered_as_graph_node():
+    from langgraph.graph import START, END, StateGraph
+    from src.planner_schemas import PlannerState
+
+    graph = StateGraph(PlannerState)
+    graph.add_node("planner", planner)
+    graph.add_edge(START, "planner")
+    graph.add_edge("planner", END)
+    with patch("src.stages.planner._create_chain") as factory:
+        factory.return_value.invoke.return_value = plan()
+        result = graph.compile().invoke({"user_query": "茅台价格"})
+    assert result["planning_status"] == "ready"
+    assert result["user_query"] == "茅台价格"
+
+
+def test_no_retry_when_disabled_and_stale_plan_is_cleared():
+    result, chain = invoke([{}], {"plan": plan(), "planning_status": "ready"}, max_retries=0)
+    assert result["plan"] is None
+    assert chain.invoke.call_count == 1

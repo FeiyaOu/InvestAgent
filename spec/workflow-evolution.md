@@ -326,3 +326,51 @@ UI 后续展示任务列表、类别、依赖及执行状态，并及时展示�
 6. **后续专家**。分别建设 analytics 与 investment_strategy，通过契约测试后接入。
 
 不因本方案自动引入数据库、API 供应商、量化库或改变最终报告输出结构。
+
+
+## 11. 独立 Planner 首版（2026-11-10 已实现，未接入旧入口）
+
+### 11.1 代码与调用
+
+- `src/planner_schemas.py`：PlanTask、TaskPlan、PlannerState。
+- `src/stages/planner.py`：`planner(state, max_retries=1)`，可直接调用或注册为 LangGraph 节点。
+- 不执行工具、专家或报告子图，不改变 `src/agent.py` 和 Streamlit 的当前行为。
+
+```python
+from src.stages.planner import planner
+
+update = planner({
+    "user_query": "茅台和五粮液现在什么价格？比较估值并分析未来一年投资机会。",
+    "conversation_context": "",  # 父图后续提供相关对话或研究摘要
+})
+```
+
+输入 user_query 必须为非空文本；可选 conversation_context 为文本，默认为空。
+不自动读取数据库或旧入口消息；后续父图负责构造上下文。
+
+### 11.2 输出契约与校验
+
+返回部分状态更新：plan、planning_status、planning_error、planning_attempts。
+
+- plan 为经 Pydantic 验证的字典，包含 status、tasks、clarification_questions。
+- tasks 每项严格包含 task_id、category、question、depends_on；category 为第 10 节四类值。
+- ready：1–12 个任务、无澄清问题；needs_clarification：无任务且至少一个非空澄清问题。
+- 校验拒绝空白任务描述、非法类别、重复 ID、重复依赖、未知依赖、自依赖和循环依赖；
+  允许依赖计划中位置靠后的任务，不强制列表按拓扑顺序排列。
+- 非法输入、模型初始化/调用异常或无效输出耗尽修正次数时，planning_status=failed，
+  plan=None，planning_error 提供 type 和用户可读 message，避免复用过期计划。
+- 默认最多一次输出修正，即最多两次规划生成；max_retries 可设为 0–3。
+  JSON 解析或计划验证错误提供修正反馈；供应商异常直接失败，供应商内部重试仍由 LLM 工厂控制。
+- planning_attempts 为本节点的生成尝试次数，不包含供应商内部重试。
+
+### 11.3 语义规则与验证边界
+
+Prompt 要求保留主体与时间范围、利用上下文解析指代、仅明确报告请求产生 report，
+不因 analytics / investment_strategy 尚未接入而更改分类，也不重复拆分报告内部阶段。
+对象或意图不明确时请求澄清。
+
+确定性验证只保证结构与依赖合法；不能证明模型没有遗漏问题、分类正确或准确理解指代。
+当前 mock 测试验证契约、上下文传入、混合计划、修正链和节点集成；
+未运行真实模型/API 的语义评估，后续可用固定案例集独立评估规划质量。
+
+下一步仍是独立建设 Supervisor，接入 market_data / report；本轮不提前实施。
