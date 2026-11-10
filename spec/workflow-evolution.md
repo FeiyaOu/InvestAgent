@@ -1,7 +1,7 @@
 # 工作流演进规格：保留报告流程，独立建设专家 Agent
 
 - 决策日期：2026-11-10
-- 状态：方案已确认；报告子图封装与父图整合尚未实现。
+- 状态：方案已确认；报告子图已封装并接入原双路径入口，目标 Planner / Supervisor 父图整合尚未实现。
 - 本轮范围：记录方案，不修改运行代码、节点逻辑或报告约束。
 
 ## 1. 已确认的边界
@@ -215,3 +215,20 @@ state = graph.invoke({"task": "查询茅台最新可用股价", "subject": "茅�
 工具预算与多次调用隔离。运行：`pytest tests/test_market_data_agent.py -q`。
 
 历史行情、财务、估值与公告结构化工具、硬超时机制、父图和 UI 整合仍待后续任务。
+
+
+## 9. 报告子图封装完成（2026-11-10）
+
+- 新增 `src/report_graph.py`，`create_report_graph()` 编译现有六节点报告链，
+  不配置私有 checkpointer，可独立调用，也可继承父图 checkpoint。
+- 六个节点函数原样复用；节点内部实现、prompt、工具调用、输出字段及实际校验重试行为均未修改。
+- `route_after_validator` 移至报告编排模块，并从 `src.agent` 继续导出，兼容已有调用。
+- 原 `create_invest_agent()` 的 Deliberative 分支挂载为 `report_workflow`，完成后退出。
+  `route_after_assess` 仍返回原逻辑标签 perception，由条件边映射到 report_workflow；
+  Reactive 路径、C8–C9 路由策略和公开调用参数不变。
+- Streamlit 通过 `subgraphs=True` 消费内部节点更新，跳过重复的父级汇总事件；
+  四节点完整输出继续展示，最终报告展示开关仍关闭。
+- 仍使用现有共享 `InvestAgentState`，本次不改变输入初始化和多轮生命周期策略。
+- 此入口只是现有双路径编排，不代表目标 Planner / Supervisor 已实现；
+  Market Data Agent 仍独立，未接入报告或原入口。
+- 回归测试覆盖独立报告执行、重试顺序、父图返回状态和嵌套 UI 事件。

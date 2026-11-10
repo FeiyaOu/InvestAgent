@@ -7,7 +7,7 @@
 
 ## 已确认的演进方案（2026-11-10）
 
-见 [工作流演进规格](workflow-evolution.md)：保留现有报告内部实现，未来封装为报告子图；
+见 [工作流演进规格](workflow-evolution.md)：保留现有报告内部实现，已封装为报告子图并接入原双路径入口；
 保留当前逐节点结果 UI；其他专家 Agent 独立建设后再整合进父图。
 报告阅读视图计划采用 Streamlit + Plotly，结构化文字与真实数据图表结合，详见演进规格第 7 节；当前仍隐藏最终报告。
 Market Data Agent 已实现独立的显式 LangGraph + ToolNode 首版（未接入父图 / UI），接口与限制见 [演进规格第 8 节](workflow-evolution.md#8-market-data-agent独立子图2026-11-10-已确认并实现首版)。
@@ -26,6 +26,10 @@ InvestAgent 自动判断查询复杂度并选择执行路径：
 ---
 
 ## 系统架构
+
+现有 Deliberative 六节点已封装到 `src/report_graph.py` 的 `create_report_graph()`，
+由原入口的 `report_workflow` 节点调用。下图展开子图内部连线；内部行为未改。
+Streamlit 消费子图节点事件，保持四个中间结果可见。目标 Supervisor 仍待整合。
 
 ```
 用户输入（研究主题 / 简单问题）

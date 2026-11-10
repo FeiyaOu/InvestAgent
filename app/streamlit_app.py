@@ -359,7 +359,14 @@ if run_btn and user_query.strip():
             accumulated_state = dict(initial_state)
             execution_events = []
 
-            for chunk in agent.stream(initial_state, config=config):
+            for event in agent.stream(initial_state, config=config, subgraphs=True):
+                # Nested graph updates are (namespace, update); accept flat updates as well.
+                namespace, chunk = event if isinstance(event, tuple) else ((), event)
+                # The parent re-emits the entire child state on completion. Individual
+                # child updates have already been rendered; avoid duplicate UI events.
+                if not namespace and "report_workflow" in chunk:
+                    accumulated_state.update(chunk["report_workflow"])
+                    continue
                 node_name = list(chunk.keys())[0]
                 state_update = chunk[node_name]
                 accumulated_state.update(state_update)

@@ -3,14 +3,14 @@
 LangGraph StateGraph — 混合型投研 Agent 连线
 
 本模块是整个 Agent 的编排中心。职责：
-- 定义所有节点（assess, reactive_agent, tools, extract_response, 5个deliberative阶段, validator）
+- 定义父图节点，并将完整报告子图挂接到 report_workflow
 - 定义路由函数（路由逻辑对应 spec C8/C9）
 - 编译 StateGraph，暴露 create_invest_agent() 和 run_invest_agent()
 
 图结构：
   assess
     ├─ reactive → reactive_agent ⟲ tools（有向环①）→ extract_response → END
-    └─ deliberative → perception → modeling → reasoning → decision → report
+    └─ deliberative → report_workflow 子图：perception → modeling → reasoning → decision → report
                                                                ↑            ↓
                                                           validator（有向环②）
                                                                ↓
@@ -29,12 +29,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from src.llm import FAST_MODEL, create_llm
-from src.stages.decision import decision
-from src.stages.modeling import modeling
-from src.stages.perception import perception
-from src.stages.reasoning import reasoning
-from src.stages.reporter import report_generation
-from src.stages.validator import validator
+from src.report_graph import create_report_graph, route_after_validator
 from src.state import VALID_PROCESSING_MODES, InvestAgentState
 from src.tools import INVEST_TOOLS
 
@@ -200,15 +195,6 @@ def should_continue_tools(state: InvestAgentState) -> str:
     return "extract_response"
 
 
-def route_after_validator(state: InvestAgentState) -> str:
-    """validator 节点后的路由：retry → decision，通过 → END
-    这是有向环②的控制函数。
-    """
-    if state.get("current_phase") == "decision":
-        return "decision"
-    return END
-
-
 # ============================================================
 # 图构建与编译
 # ============================================================
@@ -222,12 +208,7 @@ def create_invest_agent() -> Any:
     workflow.add_node("reactive_agent", reactive_agent)
     workflow.add_node("tools", ToolNode(INVEST_TOOLS))          # 内置工具执行节点
     workflow.add_node("extract_response", extract_reactive_response)
-    workflow.add_node("perception", perception)
-    workflow.add_node("modeling", modeling)
-    workflow.add_node("reasoning", reasoning)
-    workflow.add_node("decision", decision)
-    workflow.add_node("report", report_generation)
-    workflow.add_node("validator", validator)
+    workflow.add_node("report_workflow", create_report_graph())
 
     # ---- 入口 ----
     workflow.set_entry_point("assess")
@@ -236,7 +217,7 @@ def create_invest_agent() -> Any:
     workflow.add_conditional_edges(
         "assess",
         route_after_assess,
-        {"reactive_agent": "reactive_agent", "perception": "perception"},
+        {"reactive_agent": "reactive_agent", "perception": "report_workflow"},
     )
 
     # ---- 有向环①：Reactive 工具调用循环 ----
@@ -248,19 +229,7 @@ def create_invest_agent() -> Any:
     workflow.add_edge("tools", "reactive_agent")         # ← 环①回边
     workflow.add_edge("extract_response", END)
 
-    # ---- Deliberative 线性管道 ----
-    workflow.add_edge("perception", "modeling")
-    workflow.add_edge("modeling", "reasoning")
-    workflow.add_edge("reasoning", "decision")
-    workflow.add_edge("decision", "report")
-    workflow.add_edge("report", "validator")
-
-    # ---- 有向环②：Validator 重试路由 ----
-    workflow.add_conditional_edges(
-        "validator",
-        route_after_validator,
-        {"decision": "decision", END: END},
-    )
+    workflow.add_edge("report_workflow", END)
 
     return workflow.compile(checkpointer=MemorySaver())
 

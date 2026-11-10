@@ -100,3 +100,28 @@ def test_report_and_intermediate_results_have_separate_views(valid_report) -> No
     assert len(at.tabs[3].json) == 3
     assert not any("最终投研报告" in h.value for h in at.subheader)
     assert not any("运行评估" in b.label for b in at.button)
+
+
+def test_nested_report_updates_reach_execution_log_without_duplicates() -> None:
+    agent = _fake_agent()
+    state = {"processing_mode": "deliberative", "perception_data": {"market_overview": "子图证据"},
+             "world_model": {"market_state": "震荡"}, "reasoning_plans": [],
+             "selected_plan": {"investment_thesis": "子图决策"}}
+    agent.stream.return_value = iter([
+        ((), {"assess": {"processing_mode": "deliberative"}}),
+        (("report_workflow:test",), {"perception": {"perception_data": state["perception_data"]}}),
+        (("report_workflow:test",), {"modeling": {"world_model": state["world_model"]}}),
+        (("report_workflow:test",), {"decision": {"selected_plan": state["selected_plan"]}}),
+        ((), {"report_workflow": state}),
+    ])
+    agent.get_state.return_value.values = state
+    with patch("src.agent.create_invest_agent", return_value=agent):
+        at = AppTest.from_file(_APP, default_timeout=30).run()
+        at.text_area(key="query_input").input("生成报告")
+        next(b for b in at.button if "运行研究任务" in b.label).click()
+        at.run()
+    assert not at.exception
+    assert [e["node"] for e in at.session_state["execution_events"]] == [
+        "assess", "perception", "modeling", "decision",
+    ]
+    assert any("子图证据" in item.value for item in at.tabs[1].markdown)

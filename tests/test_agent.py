@@ -309,7 +309,7 @@ class TestGraphStructure:
         """编译后的 graph 应能输出 Mermaid 流程图"""
         from src.agent import create_invest_agent
         agent = create_invest_agent()
-        mermaid = agent.get_graph().draw_mermaid()
+        mermaid = agent.get_graph(xray=True).draw_mermaid()
         assert "assess" in mermaid
         assert "reactive_agent" in mermaid
         assert "perception" in mermaid
