@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from langgraph.config import get_stream_writer
 from pydantic import ValidationError
 
 from src.market_data_agent import create_market_data_agent
@@ -92,6 +93,7 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None):
             return {"supervisor_status": "failed",
                     "supervisor_error": _error("scheduler_stalled", "任务依赖无法推进。")}
         ident, category = task["task_id"], task["category"]
+        get_stream_writer()({"event": "task_started", "task_id": ident, "category": category})
         status, result, error = "failed", None, None
         blocked = [dep for dep in task["depends_on"] if results[dep]["status"] not in {"completed", "partial"}]
         if blocked:

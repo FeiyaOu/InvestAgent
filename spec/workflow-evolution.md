@@ -1,7 +1,8 @@
 # 工作流演进规格：保留报告流程，独立建设专家 Agent
 
 - 决策日期：2026-11-10
-- 状态：方案已确认；报告子图已封装并接入原双路径入口，目标 Planner / Supervisor 父图整合尚未实现。
+- 当前状态：父图、公共入口与 Streamlit 已完成迁移，旧 Reactive 已删除（第 16 节）。
+- 第 1–15 节记录各阶段决策与当时状态；涉及旧入口/未接入的叙述属于历史，以第 16 节为当前基线。
 - 本轮范围：记录方案，不修改运行代码、节点逻辑或报告约束。
 
 ## 1. 已确认的边界
@@ -591,3 +592,53 @@ graph.stream(..., subgraphs=True) 可观察规划、内部执行、逐任务结�
 测试使用 mock 模型和子图，覆盖完整请求、上下文传递、混合任务部分成功、
 无效输入、澄清、规划失败、报告隔离、过期结果重置、图复用及嵌套流式事件。
 未运行真实行情或模型 API 的集成评估。
+
+
+## 16. 公共入口与 UI 迁移完成（2026-11-10）
+
+### 16.1 入口和旧编排删除
+
+`src/agent.py` 仅保留公共门面：create_invest_agent() 创建新父图，
+run_invest_agent(user_query, *, conversation_context="", report_parameters=None, config=None)
+返回 ParentState。不再接受 thread_id 或全局报告主题/行业/时间参数。
+旧 assess_query、reactive_agent、should_continue_tools、extract_reactive_response、
+route_after_assess 和 MemorySaver 编排已删除。报告 validator 路由仍位于 report_graph.py。
+报告子图内部节点函数、提示、调用与校验行为未改。
+
+### 16.2 会话与返回结构迁移
+
+公共返回不再含顶层 processing_mode、messages 或 final_report。
+调用方从 plan、task_results、planning/supervisor/composition 状态和 final_response 读取结果。
+报告四字段与完整报告仍保留在对应 report 任务 result 内。
+不把 RunnableConfig 中的 thread_id 当作记忆，不调用 get_state()。
+Streamlit 显式拼接最近三轮问题及回答摘要作为 conversation_context，
+每条问题上限800字符、回答摘要上限1200字符；仅保留在 session_state 中。
+新对话清空摘要、结果与进度，页面更新时清除旧版状态结构。
+
+### 16.3 UI 与流式状态
+
+UI 消费 stream_mode=[updates, custom]、subgraphs=True 的父图事件。
+只将根更新写入父级快照，嵌套 task_results 用于提前显示结果；
+不将子图 messages 或内部 current_phase 合并到父状态。
+Supervisor 发出 task_started(task_id, category)，UI 依此将四个报告节点字段分组。
+本机制面向当前顺序执行；未来并行必须给每项内部事件提供独立 task_id，不能复用单一活动任务变量。
+
+页面展示任务 ID、类别、问题、依赖、状态；已返回的数据答案先展示，随后展示 Composer 回答。
+报告四节点按任务分别显示，最终报告正文、下载、评估仍隐藏。
+partial、failed、澄清与模型汇总 fallback 有显式提示；不再声称尚未接入 Supervisor。
+分析与策略任务仍 unsupported。
+移除未绑定任务的全局报告高级参数，要求用户把报告主题/行业/时间写入问题；
+底层 report_parameters 仍供明确知道计划 task_id 的程序调用者使用。
+精确的报告参数抽取仍待完善，不能因 UI 迁移宣称已解决。
+
+### 16.4 规格和验证迁移
+
+C8 更新为四类 TaskCategory 与有效计划，C9 更新为非空用户响应。
+结构 lint 检查 TaskCategory；测试不再依赖旧 Reactive / MemorySaver 接口。
+单元测试继续 mock API；集成测试改为新公共入口，明确报告请求并从任务结果取报告，
+不再因旧路由不匹配而静默 skip。集成标记显式启用时才保留真实 API key，日常测试仍清除 key。
+README、AGENTS、主规格和架构文档同步为当前运行方式。
+
+测试覆盖入口代理、旧参数拒绝、会话摘要传递、混合/未接入状态、报告四字段隐藏策略、
+多报告流式隔离、页面 rerun 不重复执行、新对话清空及真实父图结构驱动 UI（模型/工具 mock）。
+本次未执行真实模型或行情 API 集成测试。

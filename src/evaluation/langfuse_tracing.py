@@ -13,7 +13,7 @@ LangFuse 自动追踪所有 LangChain/LangGraph LLM 调用：
     from src.evaluation.langfuse_tracing import get_langfuse_handler
 
     handler = get_langfuse_handler()
-    config = {"configurable": {"thread_id": "abc"}}
+    config = {}  # 追踪配置，不代表 checkpoint 会话记忆
     if handler:
         config["callbacks"] = [handler]
     agent.stream(state, config=config)

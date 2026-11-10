@@ -13,7 +13,7 @@ Harness Engineering 核心理念的实践：
 检查项：
     1. src/stages/reporter.py 中必须包含 validate_report 函数
     2. src/stages/reporter.py 中必须定义 REQUIRED_DIMENSIONS 常量（含全部4个维度）
-    3. src/state.py 中必须定义 VALID_PROCESSING_MODES 常量（含 reactive 和 deliberative）
+    3. src/planner_schemas.py 定义四类 TaskCategory（C8）
     4. src/agent.py 中必须包含 create_invest_agent 函数
     5. 5个 stage 节点函数必须存在于对应模块（perception/modeling/reasoning/decision/report_generation）
     6. spec/invest_spec.md 必须存在
@@ -111,31 +111,21 @@ def check_required_dimensions(root: Path) -> list[str]:
 
 
 # ============================================================
-# 检查项 3：VALID_PROCESSING_MODES 常量（C8 约束的锚点）
+# 检查项 3：TaskCategory（C8）
 # ============================================================
 
-def check_valid_processing_modes(root: Path) -> list[str]:
-    state_file = root / "src" / "state.py"
-    tree, errors = _parse_source(state_file)
+def check_task_categories(root: Path) -> list[str]:
+    source_file = root / "src" / "planner_schemas.py"
+    tree, errors = _parse_source(source_file)
     if errors:
         return errors
-
-    source = state_file.read_text(encoding="utf-8")
-    if "VALID_PROCESSING_MODES" not in source:
-        return [
-            "ERROR: src/state.py 缺少 VALID_PROCESSING_MODES 常量。\n"
-            "FIX: 添加 VALID_PROCESSING_MODES = {'reactive', 'deliberative'}，\n"
-            "     对应 spec/invest_spec.md 的 C8 约束。\n"
-        ]
-
-    errors = []
-    for mode in ["reactive", "deliberative"]:
-        if f'"{mode}"' not in source and f"'{mode}'" not in source:
-            errors.append(
-                f"ERROR: VALID_PROCESSING_MODES 缺少 '{mode}'。\n"
-                f"FIX: 在 VALID_PROCESSING_MODES 中添加 '{mode}'（C8 约束要求）。\n"
-            )
-    return errors
+    aliases = [node for node in tree.body if isinstance(node, ast.Assign)
+               and any(isinstance(t, ast.Name) and t.id == "TaskCategory" for t in node.targets)]
+    if not aliases:
+        return ["ERROR: 缺少 TaskCategory。FIX: 在 planner_schemas.py 定义四类任务 Literal。"]
+    values = {node.value for node in ast.walk(aliases[0].value) if isinstance(node, ast.Constant)}
+    expected = {"market_data", "analytics", "investment_strategy", "report"}
+    return [] if values == expected else ["ERROR: TaskCategory 不符合 C8。FIX: 使用四个规定类别。"]
 
 
 # ============================================================
@@ -213,7 +203,7 @@ def main() -> int:
     checks = [
         ("检查1: validate_report 函数", check_validate_report),
         ("检查2: REQUIRED_DIMENSIONS 常量", check_required_dimensions),
-        ("检查3: VALID_PROCESSING_MODES 常量", check_valid_processing_modes),
+        ("检查3: TaskCategory 四类任务", check_task_categories),
         ("检查4: create_invest_agent 函数", check_create_invest_agent),
         ("检查5: stage 节点函数", check_stage_functions),
         ("检查6: spec/invest_spec.md 存在", check_spec_exists),

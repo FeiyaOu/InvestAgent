@@ -5,95 +5,53 @@
 
 ---
 
-## 已确认的演进方案（2026-11-10）
+## 当前运行架构（2026-11-10）
 
-见 [工作流演进规格](workflow-evolution.md)：保留现有报告内部实现，已封装为报告子图并接入原双路径入口；
-保留当前逐节点结果 UI；其他专家 Agent 独立建设后再整合进父图。
-报告阅读视图计划采用 Streamlit + Plotly，结构化文字与真实数据图表结合，详见演进规格第 7 节；当前仍隐藏最终报告。
-Market Data Agent 已实现独立的显式 LangGraph + ToolNode 首版（未接入父图 / UI），接口与限制见 [演进规格第 8 节](workflow-evolution.md#8-market-data-agent独立子图2026-11-10-已确认并实现首版)。
-最新父图方案已确认：Planner → Supervisor → 四类能力（market_data / analytics / investment_strategy / report）→ Composer；
-后续替换旧 Reactive 路径，按阶段建设。详见 [工作流演进规格第 10 节](workflow-evolution.md#10-父图任务规划与调度2026-11-10-已确认待分步实现)。独立 Planner 首版已实现，接口与限制见演进规格第 11 节；未切换入口；独立 Supervisor 也已实现（见演进规格第 12 节），Composer 已连接 Supervisor（见演进规格第 13 节）；Planner 已接入独立父图；旧入口 / UI 迁移仍待实施。
-ParentState 与统一 TaskResult 契约已实现并用于结果边界校验，见 [演进规格第 14 节](workflow-evolution.md)；完整父图已作为独立入口接线（见演进规格第 15 节），旧运行入口及 UI 尚未迁移。
-以下双路径描述为当前运行基线，未来父图的任务路由见该演进规格，尚未实现。
+公共入口和 Streamlit 已切换为请求级父图：
 
----
-
-## 功能目标
-
-输入一个研究主题（如"新能源行业"）和行业焦点（如"光伏"），
-InvestAgent 自动判断查询复杂度并选择执行路径：
-
-- **Reactive 路径**：简单市场查询，调用 AKShare 工具快速回答
-- **Deliberative 路径**：复杂研究请求，经过5个专家角色依次处理，生成结构化投研报告
-
----
-
-## 系统架构
-
-现有 Deliberative 六节点已封装到 `src/report_graph.py` 的 `create_report_graph()`，
-由原入口的 `report_workflow` 节点调用。下图展开子图内部连线；内部行为未改。
-Streamlit 消费子图节点事件，保持四个中间结果可见。目标 Supervisor 仍待整合。
-
-```
-用户输入（研究主题 / 简单问题）
-        ↓
-   [assess]          -- 协调层：判断 processing_mode
-        ↓
-   ┌────┴────┐
-reactive   deliberative
-   ↓              ↓
-[reactive_agent]  [perception]    -- 市场数据分析师：AKShare 数据收集
-  ↕ 环①              ↓
-[tools]           [modeling]      -- 宏观经济学家：构建市场内部模型
-   ↓                  ↓
-[extract_resp]    [reasoning]     -- 策略研究员：生成3个候选投资方案
-   ↓                  ↓
-  END            [decision]       -- 投资委员会主席：选择最优方案
-                      ↓
-                  [report]        -- 报告撰写专家：生成结构化 JSON 报告
-                      ↓
-                  [validator]     -- 合规审查员：校验 C1–C7
-                   ↕ 环②
-                      ↓（合格 → END，不合格 → decision，最多重试2次）
-                     END
+```text
+用户输入 + 显式会话摘要
+  → initialize → Planner → Supervisor → Composer → final_response
+                     │        ├─ market_data 子图（LLM / ToolNode 循环）
+                     │        ├─ report 子图（原六节点保持不变）
+                     │        └─ analytics / investment_strategy：unsupported
+                     └─ 澄清或失败 → Composer，不执行专家
 ```
 
-**依赖方向：** `tools ← perception ← modeling ← reasoning ← decision ← reporter ← validator`
+任务按能力与产物分类，不按整条消息复杂度二选一；只有明确报告请求产生 report 任务。
+父级采用 ParentState，task_results 按 task_id 保存统一 TaskResult；
+报告 final_report、四节点输出均在对应任务 result 内，父级不提供顶层 processing_mode / final_report。
+原 assess_query、Reactive 工具循环和回答提取节点已删除。
+报告内部工具、节点、提示和重试行为保持不变，C1–C7 不变。
 
-禁止反向依赖（validator 不能 import perception）。
+完整接口与演进见 [工作流演进规格](workflow-evolution.md) 第 8–16 节。
+历史阶段描述若与本文冲突，以当前规格及演进规格第 16 节为准。
 
----
+## 公共入口与会话
 
-## Reactive 路径工具清单
+- `create_invest_agent()` 返回 `create_parent_graph()`，不设置 checkpointer。
+- `run_invest_agent(user_query, *, conversation_context="", report_parameters=None, config=None)`
+  返回 ParentState；不再接受 thread_id 或全局 research_topic / industry_focus / time_horizon。
+- report_parameters 可按已知报告 task_id 指定参数；尚无任务 ID 时应将主题、行业和时间写入问题。
+- config 供追踪 callbacks / tags 使用，传入 thread_id 不会创建自动记忆。
+- Streamlit 只在本会话内保存历史，每次传入最近三轮的用户问题及回答摘要。
+  每轮问题截取800字符、回答截取1200字符；不是模型生成的长期摘要，也不是持久化。
+- 刷新或服务重启后可能丢失会话；「新对话」清空本地摘要与结果。
 
-| 工具函数 | 数据来源 | 描述 |
-|---|---|---|
-| `get_sector_performance(sector)` | AKShare `stock_board_industry_summary_ths()` | 查询指定行业板块涨跌幅、成交额、主力净流入 |
-| `get_index_performance()` | AKShare `index_zh_a_hist()` | 查询主要指数（上证、创业板）近期行情 |
-| `get_macro_indicators()` | AKShare `macro_china_pmi_yearly()` | 查询 PMI、GDP 等宏观经济指标 |
-| `search_stock_news(keyword)` | AKShare `stock_news_em()` | 查询与关键词相关的市场新闻 |
+## 展示与流式事件
 
-所有工具必须包含 `try/except` fallback，网络异常时返回提示文本而非抛出异常。
-环境变量 `USE_REAL_DATA=false` 时返回预设 mock 数据，用于测试和离线演示。
+页面展示任务分类、依赖、终止状态、数据证据与回答。
+任务完成即可展示，模型汇总随后返回；不把 partial 或 unsupported 冒充完全成功。
+报告四字段 perception_data / world_model / reasoning_plans / selected_plan 按报告任务分别显示。
+最终报告正文、下载与评估继续隐藏，后端仍生成和校验报告。
+Supervisor 发出 task_started 自定义事件标识 task_id/category，供顺序执行时关联内部节点事件。
+子图消息不写入父状态，UI 不使用 get_state() 或 MemorySaver。
 
----
+## 工具与数据边界
 
-## assess_query 路由规则
-
-`assess_query` 节点的 LLM 必须遵守以下路由判断规则，包括多轮场景下的跟进检测：
-
-### 单轮规则
-- **reactive**：简单直接的查询（查当天行情、询问指数点位、查产品信息）
-- **deliberative**：需要深度研究的查询（行业分析、投资机会报告、多维度研究）
-
-### 多轮跟进检测规则（有对话历史时）
-- **跟进问题 → reactive**：当前查询是对已有分析的追问（细节/风险/建议），不需要新数据
-  - 例："上述分析中哪个风险最值得关注？"
-  - 例："你刚才说的投资论点能展开说说吗？"
-- **全新话题 → deliberative**：研究主题与历史对话无关联，需要重新采集数据
-  - 例："请分析医疗器械行业的投资机会"（前一轮是新能源）
-
-`assess_query` 的 prompt 必须包含对话历史摘要，让 LLM 能够区分跟进问题和全新研究请求。
+Market Data 首版复用 src/tools.py 的五个工具（行业、指数、宏观、新闻、个股）。
+AKShare 访问只在工具层，异常必须 fallback；模拟模式必须明确标记。
+历史价格、财务与量化扩展仍以演进规格为准，不因 UI 迁移自动新增。
 
 ---
 
@@ -172,16 +130,20 @@ Deliberative 路径的最终输出必须严格遵循以下 JSON 结构：
 
 ---
 
-### 适用于两条路径（路由行为约束）
+### 适用于父图的任务与响应约束
 
-#### C8：路由有效值
-- `processing_mode` 只能是 `reactive` 或 `deliberative`
-- `assess` 节点输出其他值视为路由错误
-- 默认回退值为 `reactive`
+#### C8：任务类别与计划有效性
 
-#### C9：Reactive 路径响应完整性
-- 当 `processing_mode == reactive` 时，`final_response` 必须是**非空字符串**
-- 空字符串或 `None` 说明 reactive 路径未成功生成回答
+- category 只能为 market_data / analytics / investment_strategy / report。
+- TaskPlan 拒绝重复 ID、未知/重复/自依赖、有向环与状态矛盾；失败计划不得执行。
+- 旧 processing_mode 合法性约束退出公共接口，仅报告局部 State 保留兼容字段。
+
+#### C9：用户响应完整性
+
+- 对公共入口可处理的请求（包括规划失败、澄清、能力未接入和局部失败），
+  final_response 必须为非空字符串。
+- 回答不隐瞒失败、缺失信息或 unsupported；模型汇总失败时保留确定性结果。
+- 此要求不代表进程中断、调用方主动取消等外部故障也能保证生成响应。
 
 ---
 
@@ -197,12 +159,8 @@ MIN_SOURCES = 3
 MIN_THESIS_LENGTH = 50
 ```
 
-`src/agent.py` 必须定义以下常量：
-
-```python
-VALID_PROCESSING_MODES = {"reactive", "deliberative"}
-MAX_VALIDATOR_RETRIES = 2
-```
+`src/planner_schemas.py` 定义四类 `TaskCategory` Literal；
+`src/state.py` 的 MAX_VALIDATOR_RETRIES=2 只属于报告子图。
 
 ---
 
@@ -240,7 +198,8 @@ def validate_report(report: dict) -> list[dict]:
 
 ## Pydantic 阶段输出模型
 
-每个 Deliberative 阶段的 LLM 输出必须通过对应的 Pydantic 模型验证：
+报告阶段模型定义如下。历史阶段链仍按原实现使用 JSON 解析，并未全部调用这些模型；
+本轮不修改报告内部验证路径。新 Planner / Market Data / TaskResult / Composer 已在各自边界使用 Pydantic：
 
 | 阶段 | 模型类 | 关键字段 |
 |---|---|---|

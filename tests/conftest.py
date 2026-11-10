@@ -15,8 +15,10 @@ import pytest
 # ---- 环境隔离 ----
 
 @pytest.fixture(autouse=True)
-def _isolate_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_api_keys(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
     """确保单元测试不会意外调用真实 LLM API"""
+    if request.node.get_closest_marker("integration"):
+        return
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)

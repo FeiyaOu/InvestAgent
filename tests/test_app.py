@@ -1,127 +1,120 @@
-# -*- coding: utf-8 -*-
-"""
-Streamlit UI 测试（AppTest 进程内运行，mock 掉 Agent，不调用真实 API）
-
-- 消息历史必须是完整对话：stream chunk 只含增量，dict.update 会把 messages 覆盖成最后一个节点的输出
-"""
-
-from __future__ import annotations
-
+"""Streamlit parent-graph UI migration; no external API calls."""
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from unittest.mock import Mock, patch
 from streamlit.testing.v1 import AppTest
 
 _APP = str(Path(__file__).parent.parent / "app" / "streamlit_app.py")
 
 
-def _fake_agent() -> MagicMock:
-    tool_call = AIMessage(content="", tool_calls=[
-        {"name": "get_stock_performance", "args": {"query": "茅台"}, "id": "tc1"},
+def task(ident="m", category="market_data", status="completed", result=None):
+    return {"task_id": ident, "category": category, "question": "查询茅台", "depends_on": [],
+            "status": status, "result": result or {"answer": "100元", "evidence": [], "missing_information": []},
+            "error": None}
+
+
+def fake(records=None, status="completed", final="查询到100元"):
+    records = records or {"m": task()}
+    plan = {"status": "ready", "tasks": [{k: r[k] for k in ("task_id", "category", "question", "depends_on")}
+            for r in records.values()], "clarification_questions": []}
+    graph = Mock()
+    graph.stream.return_value = iter([
+        ((), "updates", {"planner": {"plan": plan, "planning_status": "ready"}}),
+        (("supervisor:test",), "custom", {"event": "task_started", "task_id": next(iter(records)),
+                                             "category": next(iter(records.values()))["category"]}),
+        (("supervisor:test",), "updates", {"supervisor": {"task_results": records}}),
+        ((), "updates", {"supervisor": {"task_results": records, "supervisor_status": status}}),
+        ((), "updates", {"composer": {"final_response": final, "composition_status": "completed"}}),
     ])
-    tool_result = ToolMessage(content="最新收盘 1471.87元", tool_call_id="tc1")
-    answer = AIMessage(content="茅台最新收盘 1471.87 元")
-    full_messages = [SystemMessage(content="sys"), HumanMessage(content="茅台最新股价"),
-                     tool_call, tool_result, answer]
-
-    agent = MagicMock()
-    agent.stream.return_value = iter([
-        {"assess": {"processing_mode": "reactive", "research_topic": "茅台"}},
-        {"reactive_agent": {"messages": full_messages[:3]}},
-        {"tools": {"messages": [tool_result]}},
-        {"reactive_agent": {"messages": [answer]}},
-        {"extract_response": {"final_response": answer.content}},
-    ])
-    agent.get_state.return_value.values = {
-        "processing_mode": "reactive",
-        "messages": full_messages,
-        "final_response": answer.content,
-    }
-    return agent
+    return graph
 
 
-def test_message_history_keeps_full_conversation() -> None:
-    with patch("src.agent.create_invest_agent", return_value=_fake_agent()):
+def submit(graph, history=None):
+    with patch("src.agent.create_invest_agent", return_value=graph):
         at = AppTest.from_file(_APP, default_timeout=30)
         at.run()
-        at.text_area(key="query_input").input("茅台最新股价")
-        next(b for b in at.button if "运行" in b.label).click()
-        at.run()
-
-    assert not at.exception
-    messages = at.session_state["last_result"]["messages"]
-    assert [type(m).__name__ for m in messages] == [
-        "SystemMessage", "HumanMessage", "AIMessage", "ToolMessage", "AIMessage",
-    ]
-
-
-def test_workspace_exposes_capability_views_and_backend_notice() -> None:
-    at = AppTest.from_file(_APP, default_timeout=30).run()
-    assert not at.exception
-    assert {tab.label for tab in at.tabs} >= {"回答", "数据与证据", "分析与策略", "节点结果", "执行记录"}
-    assert any("尚未接入" in item.value for item in at.info)
-
-
-def test_node_error_is_not_displayed_as_success() -> None:
-    agent = _fake_agent()
-    agent.stream.return_value = iter([
-        {"perception": {"error": "数据整理失败", "current_phase": "perception"}},
-    ])
-    agent.get_state.return_value.values = {"error": "数据整理失败"}
-    with patch("src.agent.create_invest_agent", return_value=agent):
-        at = AppTest.from_file(_APP, default_timeout=30).run()
-        at.text_area(key="query_input").input("生成新能源报告")
-        next(b for b in at.button if "运行" in b.label).click()
-        at.run()
-    assert not at.exception
-    assert any("数据整理失败" in item.value for item in at.error)
-
-
-def test_report_and_intermediate_results_have_separate_views(valid_report) -> None:
-    import json
-
-    at = AppTest.from_file(_APP, default_timeout=30)
-    at.session_state["last_result"] = {
-        "processing_mode": "deliberative",
-        "perception_data": {"market_overview": "市场证据摘要", "recent_news": ["新闻示例"]},
-        "world_model": {"market_state": "震荡", "risk_factors": ["波动风险"]},
-        "selected_plan": {"investment_thesis": "决策摘要", "selected_plan_id": "A"},
-        "final_report": json.dumps(valid_report),
-    }
-    at.run()
-    assert not at.exception
-    assert any("决策摘要" in item.value for item in at.tabs[0].markdown)
-    assert any("市场证据摘要" in item.value for item in at.tabs[1].markdown)
-    assert len(at.tabs[3].metric) == 0
-    assert {h.value for h in at.tabs[3].subheader} == {
-        "perception_data", "world_model", "reasoning_plans", "selected_plan",
-    }
-    assert len(at.tabs[3].json) == 3
-    assert not any("最终投研报告" in h.value for h in at.subheader)
-    assert not any("运行评估" in b.label for b in at.button)
-
-
-def test_nested_report_updates_reach_execution_log_without_duplicates() -> None:
-    agent = _fake_agent()
-    state = {"processing_mode": "deliberative", "perception_data": {"market_overview": "子图证据"},
-             "world_model": {"market_state": "震荡"}, "reasoning_plans": [],
-             "selected_plan": {"investment_thesis": "子图决策"}}
-    agent.stream.return_value = iter([
-        ((), {"assess": {"processing_mode": "deliberative"}}),
-        (("report_workflow:test",), {"perception": {"perception_data": state["perception_data"]}}),
-        (("report_workflow:test",), {"modeling": {"world_model": state["world_model"]}}),
-        (("report_workflow:test",), {"decision": {"selected_plan": state["selected_plan"]}}),
-        ((), {"report_workflow": state}),
-    ])
-    agent.get_state.return_value.values = state
-    with patch("src.agent.create_invest_agent", return_value=agent):
-        at = AppTest.from_file(_APP, default_timeout=30).run()
-        at.text_area(key="query_input").input("生成报告")
+        if history:
+            at.session_state["conversation_history"] = history
+        at.text_area(key="query_input").input("茅台价格")
         next(b for b in at.button if "运行研究任务" in b.label).click()
         at.run()
     assert not at.exception
-    assert [e["node"] for e in at.session_state["execution_events"]] == [
-        "assess", "perception", "modeling", "decision",
+    return at
+
+
+def test_parent_answer_and_explicit_summary_without_checkpoint():
+    graph = fake()
+    at = submit(graph, [{"query": "研究茅台", "response_preview": "此前结果", "status": "completed"}])
+    assert "研究茅台" in graph.stream.call_args.args[0]["conversation_context"]
+    assert "此前结果" in graph.stream.call_args.args[0]["conversation_context"]
+    assert "100元" in at.session_state["last_result"]["final_response"]
+    graph.get_state.assert_not_called()
+    assert any("没有 checkpoint" in item.value for item in at.caption)
+
+
+def test_partial_state_is_not_silent_success():
+    records = {"a": {**task("a", "analytics", "unsupported"), "result": None,
+                     "error": {"type": "capability_unavailable", "message": "尚未接入"}}}
+    at = submit(fake(records, status="failed", final="分析能力尚未接入"))
+    assert any("未完成" in item.value for item in at.error)
+    assert "unsupported" in str(at.dataframe[0].value)
+
+
+def test_report_nodes_visible_and_report_body_hidden():
+    payload = {"perception_data": {"market_overview": "市场证据"}, "world_model": {"market_state": "震荡"},
+               "reasoning_plans": [], "selected_plan": {"investment_thesis": "决策依据"},
+               "final_report": "SECRET_REPORT"}
+    at = submit(fake({"r": task("r", "report", result=payload)}, final="报告正文暂时隐藏"))
+    assert {h.value for h in at.tabs[3].subheader} >= {"perception_data", "world_model", "reasoning_plans", "selected_plan"}
+    assert len(at.tabs[3].json) == 4
+    assert "SECRET_REPORT" not in str([j.value for j in at.json])
+
+
+def test_rerender_does_not_execute_again_and_new_chat_clears_summary():
+    graph = fake(); at = submit(graph)
+    at.run()
+    assert graph.stream.call_count == 1
+    next(b for b in at.button if "新对话" in b.label).click()
+    at.run()
+    assert at.session_state["conversation_history"] == []
+    assert at.session_state["last_result"] is None
+
+
+def test_multiple_reports_stream_under_their_task_ids():
+    graph = fake({"r1": task("r1", "report", result={"perception_data": {"topic": "A"}}),
+                  "r2": task("r2", "report", result={"perception_data": {"topic": "B"}})})
+    events = list(graph.stream.return_value)
+    events[2:2] = [
+        (("s", "r"), "updates", {"perception": {"perception_data": {"topic": "A"}}}),
+        (("s",), "custom", {"event": "task_started", "task_id": "r2", "category": "report"}),
+        (("s", "r"), "updates", {"perception": {"perception_data": {"topic": "B"}}}),
     ]
-    assert any("子图证据" in item.value for item in at.tabs[1].markdown)
+    graph.stream.return_value = iter(events)
+    at = submit(graph)
+    assert at.session_state["report_progress"]["r1"]["perception_data"]["topic"] == "A"
+    assert at.session_state["report_progress"]["r2"]["perception_data"]["topic"] == "B"
+
+
+def test_clarification_display_skips_task_execution():
+    graph = Mock(); graph.stream.return_value = iter([
+        ((), "updates", {"planner": {"planning_status": "needs_clarification", "plan": {
+            "status": "needs_clarification", "tasks": [], "clarification_questions": ["哪家公司？"]}}}),
+        ((), "updates", {"composer": {"final_response": "哪家公司？", "composition_status": "needs_clarification"}})])
+    at = submit(graph)
+    assert "哪家公司" in at.session_state["last_result"]["final_response"]
+    assert any("补充" in item.value for item in at.info)
+
+
+def test_real_parent_stream_drives_ui_with_mocked_specialists():
+    from src.parent_graph import create_parent_graph
+    md = Mock(); md.invoke.return_value = {"status": "completed", "error": None, "result": {
+        "answer": "实际父图100元", "evidence": [], "evidence_ids": [], "missing_information": []}}
+    planning = Mock(); planning.invoke.return_value = {"status": "ready", "tasks": [
+        {"task_id": "m", "category": "market_data", "question": "查茅台", "depends_on": []}],
+        "clarification_questions": []}
+    composing = Mock(); composing.invoke.return_value = {"answer": "实际父图100元"}
+    with patch("src.stages.planner._create_chain", return_value=planning), patch(
+            "src.stages.composer._create_chain", return_value=composing):
+        at = submit(create_parent_graph(market_data_graph=md, report_graph=Mock()))
+    assert at.session_state["last_result"]["task_results"]["m"]["status"] == "completed"
+    assert "实际父图100元" in at.session_state["last_result"]["final_response"]
+    assert "messages" not in at.session_state["last_result"]

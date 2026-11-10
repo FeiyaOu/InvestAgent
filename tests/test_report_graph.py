@@ -3,7 +3,7 @@ from contextlib import ExitStack
 from unittest.mock import patch
 
 from src.report_graph import create_report_graph
-from src.agent import create_invest_agent
+from src.parent_graph import create_parent_graph
 
 
 def build(retries=0, parent=False):
@@ -26,8 +26,11 @@ def build(retries=0, parent=False):
         for name, output in nodes.items():
             stack.enter_context(patch(f"src.report_graph.{name}", stage(name, output)))
         if parent:
-            stack.enter_context(patch("src.agent.assess_query", return_value={"processing_mode": "deliberative"}))
-        graph = create_invest_agent() if parent else create_report_graph()
+            factory = stack.enter_context(patch("src.stages.planner._create_chain"))
+            factory.return_value.invoke.return_value = {"status": "ready", "tasks": [
+                {"task_id": "r", "category": "report", "question": "生成新能源报告", "depends_on": []}],
+                "clarification_questions": []}
+        graph = create_parent_graph() if parent else create_report_graph()
     return graph, events
 
 
@@ -48,10 +51,16 @@ def test_retry_repeats_only_decision_report_validator():
 
 def test_parent_exposes_nested_updates_and_final_state():
     graph, events = build(parent=True)
-    config = {"configurable": {"thread_id": "nested"}}
-    chunks = list(graph.stream({"retry_count": 0}, config=config, subgraphs=True))
+    from unittest.mock import Mock
+    chain = Mock()
+    chain.invoke.return_value = {"status": "ready", "tasks": [
+        {"task_id": "r", "category": "report", "question": "生成报告", "depends_on": []}],
+        "clarification_questions": []}
+    with patch("src.stages.planner._create_chain", return_value=chain):
+        chunks = list(graph.stream({"user_query": "生成报告"}, subgraphs=True))
     assert any(namespace and "perception" in update for namespace, update in chunks)
-    state = graph.get_state(config).values
-    assert state["selected_plan"] == {"selected_plan_id": "A"}
-    assert state["current_phase"] == "completed"
-    assert "report_workflow" in graph.get_graph().nodes
+    update = next(update["supervisor"] for namespace, update in chunks if not namespace and "supervisor" in update)
+    payload = update["task_results"]["r"]["result"]
+    assert payload["selected_plan"] == {"selected_plan_id": "A"}
+    assert payload["current_phase"] == "completed"
+    assert "supervisor" in graph.get_graph().nodes

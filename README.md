@@ -1,102 +1,17 @@
-# InvestAgent — 基于 LangGraph 的混合路径 AI 投研 Agent
+# InvestAgent — LangGraph 投研助手
 
-> 输入研究主题，Agent 自动判断查询复杂度并选择执行路径：简单问题走 Reactive 路径调用 AKShare 快速回答；复杂研究走 Deliberative 路径，由5个专家角色依次完成感知→建模→推理→决策→报告，最终生成结构化 JSON 投研报告。全程 Pydantic 约束输出结构，LangFuse 追踪每个 LLM 调用，OpenEvals 量化评估报告质量。
+用户输入由 Planner 拆为任务，Supervisor 调度 Market Data / Report 子图，Composer 汇总结果。
+数据查询和完整报告已接入；Analytics / Investment Strategy 尚未接入，返回明确状态。
+原 Reactive 路径已移除。完整设计见 [主规格](spec/invest_spec.md) 与 [架构](spec/project-architecture.md)。
 
----
-
-## 核心亮点
-
-- **智能双路径路由**：`assess` 节点通过 LLM 自动区分简单查询与深度研究，多轮对话中支持跟进问题识别，无需用户手动切换
-- **5阶段深度投研流水线**：Deliberative 路径由市场数据分析师、宏观经济学家、策略研究员、投委会主席、报告撰写专家5个专家角色协作，输出符合 C1–C7 规范的 JSON 投研报告
-- **内置质检与自动重试**：Validator 节点对报告执行 C1–C7 合规约束校验，不合格自动回退至 decision 节点重试（最多2次）
-- **Production-ready 工程化**：LangFuse 链路追踪 + OpenEvals LLM-as-judge 评估 + 5组 pytest 测试文件 + `USE_REAL_DATA=false` 离线 mock 模式
-
----
-
-## 技术栈
-
-| 层次 | 技术 |
-|---|---|
-| Agent 编排 | LangGraph `StateGraph`，条件边，双有向环 |
-| LLM | 通义千问（Qwen）via DashScope `ChatTongyi` |
-| 市场数据 | AKShare（A 股行情、指数、PMI、市场新闻） |
-| 输出验证 | Pydantic v2（每个 Stage 输出 Schema） |
-| 可观测性 | LangFuse（延迟、Token、prompt/response 追踪） |
-| 效果评估 | OpenEvals LLM-as-judge（相关性、幻觉率、投资逻辑质量） |
-| UI | Streamlit |
-| 测试 | pytest（单元 + 集成，mock LLM 解耦） |
-
----
-
-## 系统架构
-
-```
-用户输入（研究主题 / 简单问题）
-        ↓
-   [assess]          ── LLM 判断 processing_mode
-        ↓
-   ┌────┴────┐
-reactive   deliberative
-   ↓              ↓
-[reactive_agent]  [perception]    ← 市场数据分析师：AKShare 数据收集
-    ↕ 环①              ↓
-[tools(AKShare)]  [modeling]      ← 宏观经济学家：构建市场内部模型
-    ↓                  ↓
-[extract_resp]    [reasoning]     ← 策略研究员：生成3个候选投资方案
-    ↓                  ↓
-   END            [decision]      ← 投委会主席：选择最优方案
-                       ↓
-                   [report]       ← 报告撰写专家：生成结构化 JSON 报告
-                       ↓
-                  [validator]     ← 合规审查员：校验 C1–C7
-                   ↕ 环②（不合格 → decision，最多重试2次）
-                       ↓
-                      END
+```text
+用户输入 + 显式会话摘要 → Planner → Supervisor → Composer → 回答
+                                    ├─ Market Data（LLM + ToolNode）
+                                    └─ Report（感知→建模→推理→决策→报告→校验）
 ```
 
-**两个有向环说明：**
-- **环①** `reactive_agent → tools → reactive_agent`：工具调用循环，直到 LLM 不再发出 tool call
-- **环②** `validator → decision → report → validator`：报告质检重试，`retry_count` 防止无限循环
-
----
-
-## 项目结构
-
-```
-InvestAgent/
-├── spec/
-│   ├── invest_spec.md          # 规格文档（项目"一等公民"）
-│   └── project-architecture.md # 架构决策记录
-├── src/
-│   ├── agent.py                # LangGraph 图编排（节点连线、路由函数）
-│   ├── state.py                # InvestAgentState TypedDict
-│   ├── tools.py                # AKShare 工具函数（@tool 装饰器）
-│   ├── schemas.py              # Pydantic 输出 Schema
-│   ├── stages/
-│   │   ├── perception.py       # 阶段1：市场数据分析师
-│   │   ├── modeling.py         # 阶段2：宏观经济学家
-│   │   ├── reasoning.py        # 阶段3：策略研究员
-│   │   ├── decision.py         # 阶段4：投委会主席
-│   │   ├── reporter.py         # 阶段5：报告撰写专家
-│   │   └── validator.py        # 合规审查员（C1–C7）
-│   └── evaluation/
-│       ├── langfuse_tracing.py # LangFuse 链路追踪
-│       └── openevals_eval.py   # LLM-as-judge 效果评估
-├── tests/
-│   ├── conftest.py
-│   ├── test_agent.py           # C8–C9：路由行为测试
-│   ├── test_stages.py          # Stage 函数单元测试（mock LLM）
-│   ├── test_reporter.py        # C1–C7：报告结构合规测试
-│   ├── test_tools.py           # AKShare 工具测试
-│   └── test_integration.py     # 端到端集成测试
-├── app/
-│   └── streamlit_app.py        # Streamlit UI
-├── Makefile
-├── requirements.txt
-└── requirements-dev.txt
-```
-
----
+Streamlit 展示逐任务结果与报告四个中间节点，报告正文暂时隐藏。
+没有 checkpoint 自动记忆；会话摘要仅存于当前浏览器会话，刷新或重启可能丢失。
 
 ## 快速开始
 
@@ -160,7 +75,7 @@ make test-integration     # 端到端集成测试（需 DASHSCOPE_API_KEY）
 
 ## 报告输出格式
 
-Deliberative 路径最终输出标准 JSON 报告：
+报告任务的 `task_results[task_id]["result"]["final_report"]` 保留标准 JSON（非顶层返回字段）：
 
 ```json
 {
@@ -195,8 +110,8 @@ Deliberative 路径最终输出标准 JSON 报告：
 | C5 | `sources` ≥ 3项 | `validator` 节点 |
 | C6 | `risk_factors` 非空 | `validator` 节点 |
 | C7 | `investment_thesis` ≥ 50字符 | `validator` 节点 |
-| C8 | `processing_mode` ∈ {reactive, deliberative} | `test_agent.py` |
-| C9 | reactive 路径 `final_response` 非空 | `test_agent.py` |
+| C8 | 四类任务及有效依赖计划 | `test_agent.py` / `test_planner.py` |
+| C9 | 父图 `final_response` 非空 | `test_agent.py` / `test_parent_graph.py` |
 
 ---
 
@@ -212,3 +127,15 @@ make lint
 ## 许可
 
 MIT
+
+
+## Python 公共入口
+
+```python
+from src.agent import run_invest_agent
+state = run_invest_agent("查询茅台价格", conversation_context="此前讨论贵州茅台")
+print(state["final_response"])
+print(state["task_results"])
+```
+
+旧 processing_mode / 顶层 final_report / thread_id 记忆约定不再支持。
