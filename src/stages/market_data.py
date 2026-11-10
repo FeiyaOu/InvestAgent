@@ -53,10 +53,15 @@ def initialize(state: MarketDataState) -> dict:
 def make_agent_node(tools, max_tool_rounds: int, max_tool_calls: int):
     def agent(state: MarketDataState) -> dict:
         try:
-            response = create_llm(FAST_MODEL).bind_tools(tools).invoke(state["messages"])
+            llm = create_llm(FAST_MODEL)
+            repairing = state["output_retries"] > 0
+            # Repair is a formatting/reference operation, never a new data request.
+            response = (llm if repairing else llm.bind_tools(tools)).invoke(state["messages"])
             if not isinstance(response, AIMessage):
                 return failure("model_error", "模型未返回 AIMessage。")
             calls = response.tool_calls
+            if repairing and calls:
+                return failure("invalid_output", "输出修正阶段不得重新调用工具。")
             if calls and (state["tool_rounds"] >= max_tool_rounds or
                           state["tool_calls_used"] + len(calls) > max_tool_calls):
                 return failure("tool_budget_exceeded", "达到工具调用预算，任务已停止。")
@@ -81,7 +86,13 @@ def make_tools_node(tools):
                         "retrieved_at": datetime.now(timezone.utc).isoformat(),
                         "status": "error" if getattr(message, "status", "") == "error" else "returned",
                         "data_mode": data_mode(), "source_url": None, "as_of_date": None})
-            return {"messages": update["messages"], "evidence": evidence,
+            manifest = [{"evidence_id": item["tool_call_id"], "tool_name": item["tool_name"]}
+                        for item in evidence + state.get("existing_evidence", [])]
+            guidance = HumanMessage(content=(
+                "工具已返回。可引用证据清单：" + json.dumps(manifest, ensure_ascii=False) +
+                "。最终 evidence_ids 必须逐字复制清单中的 evidence_id，不要自行命名。"
+                "已有数据足够时直接输出最终 JSON，不要重复查询相同数据；仅缺少必要数据时调用新工具。"))
+            return {"messages": update["messages"] + [guidance], "evidence": evidence,
                     "tool_rounds": state["tool_rounds"] + 1,
                     "tool_calls_used": state["tool_calls_used"] + len(state["messages"][-1].tool_calls)}
         except Exception:
@@ -126,7 +137,7 @@ def make_finalize_node(max_output_retries: int):
             available = [item.get("tool_call_id") for item in state["evidence"] + state.get("existing_evidence", [])]
             if state["output_retries"] < max_output_retries:
                 return {"output_retries": state["output_retries"] + 1,
-                        "messages": [HumanMessage(content=f"输出验证失败：{reason}。可用证据 ID：{json.dumps(available, ensure_ascii=False)}。请按系统 JSON schema 修正，仅输出完整 JSON；无证据须说明缺失信息。")],
+                        "messages": [HumanMessage(content=f"输出验证失败：{reason}。可用证据 ID：{json.dumps(available, ensure_ascii=False)}。仅修正已有回答，不重新查询或调用工具。请按系统 JSON schema 修正，仅输出完整 JSON；无证据须说明缺失信息。")],
                         "status": "running"}
             return failure("invalid_output", "输出格式或证据引用验证失败。")
     return finalize

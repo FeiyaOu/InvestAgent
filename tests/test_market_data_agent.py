@@ -152,3 +152,19 @@ def test_output_repair_receives_actual_evidence_ids_and_reason():
     feedback = llm.invoke.call_args.args[0][-1].content
     assert "c1" in feedback
     assert "未知" in feedback
+
+
+def test_tool_results_include_evidence_manifest_before_synthesis():
+    _, result, llm = run([call(), answer()])
+    assert result["status"] == "completed"
+    synthesis_input = llm.invoke.call_args.args[0]
+    assert "c1" in synthesis_input[-1].content
+    assert "不要重复" in synthesis_input[-1].content
+
+
+def test_output_repair_does_not_bind_tools_or_execute_new_calls():
+    _, result, llm = run([call(), answer(evidence_ids=["wrong"]), call(ident="duplicate")])
+    assert result["status"] == "failed"
+    assert result["error"]["type"] == "invalid_output"
+    assert result["tool_calls_used"] == 1
+    assert llm.bind_tools.call_count == 2  # Initial selection + synthesis, not repair.
