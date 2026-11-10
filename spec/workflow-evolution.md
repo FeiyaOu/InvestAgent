@@ -440,3 +440,100 @@ mock 测试覆盖分类调度、依赖顺序、证据传递、状态隔离、未
 局部异常、报告适配与复核、完整12任务终止，以及真实子图结构下的嵌套执行和事件。
 不访问真实模型或行情 API；未新增数据库或强制网络超时。
 下一步为 Composer 与新父图入口整合，本轮不提前实现。
+
+
+## 13. Composer 与 Supervisor 接线（2026-11-10 已实现，未切换入口）
+
+- 新增 `src/stages/composer.py`，`composer(state)` 汇总终止任务；
+  `src/composer_state.py` 定义 ResponseState 与非空回答的 Pydantic 模型。
+- 新增 `src/response_graph.py` 的 `create_response_graph()`：
+  START → execution（现有 Supervisor 子图）→ composer → END。
+- 输入 user_query、已验证的 plan、可选 report_parameters；
+  返回原任务结果、supervisor_status，以及 final_response、composition_status、composition_error。
+- 不自动调用 Planner；暂不切换 `src/agent.py`、不移除旧 Reactive、不改 Streamlit。
+
+```python
+from src.stages.planner import planner
+from src.response_graph import create_response_graph
+
+query = "查询茅台最新价格"
+planning = planner({"user_query": query})
+if planning["planning_status"] == "ready":
+    result = create_response_graph().invoke({"user_query": query, "plan": planning["plan"]})
+    answer = result["final_response"]
+```
+
+### 13.1 汇总行为
+
+有可用 market_data 回答时，通过 LLM 生成简洁汇总，并验证非空 answer。
+同时附加确定性的逐任务结果：类别、问题、完成状态、数据回答、缺失信息、工具名、
+数据模式、数据日期、采集时间及实际存在的来源链接。采集时间不冒充行情日期。
+模型失败、JSON 解析失败或输出无效时，不额外重试，返回逐任务结果作为 fallback；
+不丢失 Supervisor 已收集的成功结果，不泄漏模型调用的原始异常。
+
+澄清状态直接返回澄清问题，不调用模型；没有可用结果时返回任务状态或通用失败提示。
+仅有报告产物而没有数据回答时，直接返回状态，不调用模型。
+Supervisor 尚未终止时拒绝汇总。
+composition_status=completed 只表示汇总完成，不代表所有任务或证据完整；
+业务完成情况仍以 supervisor_status 和逐任务 status 为准。
+
+### 13.2 报告展示边界
+
+Composer 按白名单构造模型输入：report 只包含任务信息、状态和正文隐藏提示，
+不传入 final_report、world_model 等报告负载，也不在回答中渲染其正文。
+原始报告与四节点结果仍保存在 task_results，供未来 UI 的节点详情使用。
+此保证针对程序的数据传递边界；LLM 自由文字的事实正确性仍需后续真实模型评估。
+
+### 13.3 验收与后续
+
+mock 测试覆盖部分成功、未接入能力、数据缺失与模拟标识、来源展示、模型失败回退、
+报告负载隔离、澄清、无效计划、真实解析链，以及 Supervisor → Composer 图内连通。
+不访问真实模型或行情 API。下一步再整合 Planner 并迁移入口 / UI，不提前实施。
+
+
+## 14. ParentState 与统一 TaskResult（2026-11-10 已实现契约，未接父图）
+
+### 14.1 父级状态与初始化
+
+`src/parent_state.py` 定义独立 ParentState、Pydantic ParentRequest 与 create_parent_state()。
+父级只包含 user_query、conversation_context、report_parameters，以及 planning、supervisor、
+composition 各阶段状态、错误、plan、task_results 和 final_response。
+plan / final_response 和各阶段状态在新请求时初始化为 None；次数为0，结果字典为空。
+输入非空问题与结构化报告参数通过 Pydantic 验证；输入无效时构造函数抛 ValidationError，
+未来用户入口负责捕获并提示，当前尚未接线。
+
+不包含子图 messages、current_phase、retry_count、顶层 final_report 或 Supervisor 的 last_task_id。
+子图局部字段保留在子图，报告完整输出作为某个任务的 result 保存。
+create_parent_state() 每次新建并复制输入，不复用上一请求的计划、结果或回答；
+仅显式传入的 conversation_context 作为对话上下文，不自动保存工具消息。
+本轮不增加 request/thread 身份、数据库或 checkpointer。
+
+### 14.2 统一任务结果边界
+
+`src/task_contracts.py` 定义 TaskResult（继承 PlanTask）和 TaskError。
+统一信封字段为 task_id、category、question、depends_on、status、result、error。
+
+- status 仅允许 completed / partial / failed / blocked / unsupported，记录只保存终止结果。
+- completed / partial 必须有字典 result 且 error=None。
+- failed 必须有结构化 error，允许保留字典 result（如失败报告的节点结果）。
+- blocked / unsupported 必须有结构化 error 且 result=None，不伪造未执行任务产物。
+- error 严格包含非空 type / message；拒绝额外信封字段。
+- result 是各专家自行验证的局部载荷，不强迫不同子图采用同一种内容结构。
+  TaskResult 不代替 MarketDataResult 或 validate_report() 的领域校验。
+
+validate_task_results() 验证结果映射的 key 与 task_id 一致，并返回独立深复制字典。
+Supervisor 在写出每个终止结果时验证 TaskResult；Composer 在汇总前验证结果映射，
+无效数据返回 composition_status=failed / invalid_task_results，不调用模型。
+统一契约不能证明结果事实正确，也不在此处验证整个任务依赖图；计划仍由 TaskPlan 验证。
+
+### 14.3 与现有组件复用及后续范围
+
+Planner / Supervisor / Composer 现有节点接口继续使用部分字典状态更新，
+与 ParentState 同名边界字段兼容，不将三个组件的全部局部 State 无条件合并。
+父图未来通过适配只投影必要字段，尤其不把局部消息作为用户对话历史。
+当前顺序调度按任务结果字典覆盖更新；未来并行时再定义按 task_id 合并的 reducer。
+
+本轮不构建完整父图、不迁移 Streamlit、不改报告节点、不删除旧 Reactive。
+测试覆盖请求隔离、输入复制、状态一致性、失败报告产物保留、结果 key 校验、
+Composer 无效边界处理，以及手动顺序复用 Planner → Supervisor → Composer。
+下一步再基于该契约设计初始化、规划失败/澄清路由与父图接线。

@@ -12,6 +12,7 @@ from src.planner_schemas import TaskPlan
 from src.report_graph import create_report_graph
 from src.stages.reporter import validate_report
 from src.supervisor_state import ReportParameters, SupervisorState
+from src.task_contracts import TaskResult
 
 
 def _error(kind, message):
@@ -119,7 +120,9 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None):
                     status, result, error = _report_result(raw)
             except Exception:
                 status, result, error = "failed", None, _error("specialist_error", "专家执行或结果格式异常，请重试。")
-        results[ident] = {**task, "status": status, "result": result, "error": error}
+        results[ident] = TaskResult.model_validate(
+            {**task, "status": status, "result": result, "error": error}
+        ).model_dump()
         return {"task_results": results, "last_task_id": ident}
 
     def route(state):
