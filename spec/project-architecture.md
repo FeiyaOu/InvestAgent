@@ -12,6 +12,8 @@
 数据查询、分析、策略 / 风险 Agent 独立开发后，由父级 Planner / Supervisor 整合。
 报告展示层后续采用 Streamlit + Plotly，复用结构化数据绘图；启用时机与数据规则见演进规格第 7 节。
 Market Data Agent 已实现独立的显式 LangGraph + ToolNode 首版（未接入父图 / UI），接口与限制见 [演进规格第 8 节](workflow-evolution.md#8-market-data-agent独立子图2026-11-10-已确认并实现首版)。
+最新父图方案已确认：Planner → Supervisor → 四类能力（market_data / analytics / investment_strategy / report）→ Composer；
+后续替换旧 Reactive 路径，按阶段建设。详见 [工作流演进规格第 10 节](workflow-evolution.md#10-父图任务规划与调度2026-11-10-已确认待分步实现)。下一步仅实现独立 Planner，不切换入口。
 目标父图仍待实施，本文以下双路径架构为当前基线；报告分支内部现由 report_workflow 子图封装。
 此前讨论的“让报告立即复用新专家”不属于本阶段范围。
 
