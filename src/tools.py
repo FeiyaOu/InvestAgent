@@ -595,13 +595,24 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
         real = _should_use_real_data()
         if real:
             import akshare as ak
+            provider = "akshare/eastmoney"
             if asset_type == "stock":
-                df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
-                    end_date=end.strftime("%Y%m%d"), adjust="" if adjustment == "none" else adjustment)
+                try:
+                    df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
+                        end_date=end.strftime("%Y%m%d"), adjust="" if adjustment == "none" else adjustment)
+                except Exception:
+                    df = None
+                if df is None or df.empty:
+                    prefix = "sh" if code.startswith("6") else "sz"
+                    df = ak.stock_zh_a_daily(symbol=prefix + code, start_date=start.strftime("%Y%m%d"),
+                        end_date=end.strftime("%Y%m%d"), adjust="" if adjustment == "none" else adjustment)
+                    provider = "akshare/sina"
+                    if df is not None:
+                        df = df.rename(columns={"date": "日期", "close": "收盘", "open": "开盘",
+                            "high": "最高", "low": "最低", "volume": "成交量"})
             else:
                 df = ak.index_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
                                        end_date=end.strftime("%Y%m%d"))
-            provider = "akshare/eastmoney"
         else:
             days = pd.bdate_range(start, end)
             df = pd.DataFrame({"日期": days, "收盘": [100. + i * .1 for i in range(len(days))]})
@@ -620,21 +631,21 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
                     row[key] = None if pd.isna(raw[column]) else float(raw[column])
             if has_volume:
                 # stock_zh_a_hist documented volume is lots (手), normalize to shares.
-                row["volume"] = None if pd.isna(raw["成交量"]) else float(raw["成交量"]) * 100
+                row["volume"] = None if pd.isna(raw["成交量"]) else float(raw["成交量"]) * (1 if provider == "akshare/sina" else 100)
             rows.append(row)
         dataset = PriceDataset(kind="price_history", symbol=code,
             market=("SSE" if code.startswith("6") else "SZSE") if asset_type == "stock" else "CN_INDEX",
             asset_type=asset_type, currency="CNY", frequency="daily", adjustment=adjustment,
             price_unit="CNY/share" if asset_type == "stock" else "points",
             volume_unit="shares" if has_volume else "not_available", provider=provider,
-            source_url="https://quote.eastmoney.com/" if real else None,
+            source_url=("https://finance.sina.com.cn/" if provider == "akshare/sina" else "https://quote.eastmoney.com/") if real else None,
             retrieved_at=datetime.now(timezone.utc), data_mode="real" if real else "mock", rows=rows)
         ref = store.put(dataset)
         return json.dumps({"status": "available", "dataset_ref": ref.model_dump(mode="json"),
             "first_close": rows[0]["close"], "last_close": rows[-1]["close"],
             "limitations": ["模拟工作日序列，不反映交易所节假日或真实行情"] if not real else []}, ensure_ascii=False)
-    except Exception:
-        return unavailable("history_unavailable", "历史行情获取或数据验证失败；未注册数据集，请稍后重试。")
+    except Exception as exc:
+        return unavailable("history_unavailable", f"历史行情获取或数据验证失败（{type(exc).__name__}）；未注册数据集，请稍后重试。")
 
 
 @tool

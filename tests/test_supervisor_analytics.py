@@ -188,3 +188,22 @@ def test_planned_analytics_parameters_reach_subagent_and_task_result():
     assert inputs["time_range"] == "2025-01-01至2025-01-03"
     assert inputs["assumptions"]["window"] == 20
     assert state["task_results"]["a"]["analytics_parameters"]["assumptions"]["periods_per_year"] == 252
+
+
+def test_cited_chart_artifacts_are_exported_as_custom_events_not_parent_state():
+    _, _, ref, config, md = setup()
+    created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
+    analytics = Mock(); analytics.invoke.return_value = result(ref, created)
+    graph = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics)
+    events = list(graph.stream({"plan": plan(task("m", "market_data"), task("a", "analytics", ["m"]))},
+                              config=config, stream_mode=["updates", "custom"], subgraphs=True))
+    exported = [payload for _, mode, payload in events if mode == "custom" and payload.get("event") == "analysis_artifacts"]
+    assert len(exported) == 1
+    assert exported[0]["task_id"] == "a"
+    snapshot = exported[0]["artifacts"][created["analysis_id"]]
+    assert snapshot["series"]["cumulative_return"]
+    for _, mode, update in events:
+        if mode == "updates" and "supervisor" in update:
+            for record in update["supervisor"]["task_results"].values():
+                for ref in (record.get("result") or {}).get("analysis_refs", []):
+                    assert "series" not in ref

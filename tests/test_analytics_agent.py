@@ -249,3 +249,24 @@ def test_repository_methodology_is_nonempty_and_reloaded_after_edits(tmp_path, m
     import pytest
     with pytest.raises(ValueError):
         analytics.load_analytics_methodology()
+
+
+def test_valuation_references_cannot_be_dismissed_without_computation():
+    from src.datasets import ValuationDataset
+    ds, store, _, config = setup_data()
+    refs = [ds.put(ValuationDataset(kind='valuation_snapshot', symbol=symbol, market=market,
+        currency='CNY', provider='test', retrieved_at=datetime.now(timezone.utc), data_mode='real',
+        as_of_date=date(2025, 1, 3), metrics={
+            'pe_ttm': {'value': pe, 'unit': 'multiple', 'basis': 'PE_TTM'},
+            'pb': {'value': pb, 'unit': 'multiple', 'basis': 'PB_MRQ'}})).model_dump(mode='json')
+        for symbol, market, pe, pb in [('600519', 'SSE', 21., 6.), ('000858', 'SZSE', 23., 2.)]]
+    llm = Mock(); llm.bind_tools.return_value = llm
+    replies = iter([False, True])
+    def respond(messages):
+        return result_answer(messages) if next(replies) else answer(missing_information=['未看到估值字段'])
+    llm.invoke.side_effect = respond
+    with patch('src.stages.analytics.create_llm', return_value=llm):
+        result = create_analytics_agent().invoke({'task': '比较茅台和五粮液估值', 'dataset_refs': refs}, config=config)
+    assert result['status'] == 'completed'
+    assert result['tool_calls_used'] == 1
+    assert result['result']['findings'][0]['metrics']['pe_ttm.median'] == 22.

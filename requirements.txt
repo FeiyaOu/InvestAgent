@@ -25,6 +25,7 @@ numpy>=1.26
 
 # Streamlit — UI
 streamlit>=1.49
+plotly>=6.0,<7
 
 # Environment variable loading
 python-dotenv>=1.0

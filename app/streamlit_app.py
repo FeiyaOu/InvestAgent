@@ -13,6 +13,8 @@ if _project_root not in sys.path:
 from dotenv import dotenv_values, load_dotenv
 import streamlit as st
 
+from app.analytics_dashboard import render_analytics_task
+
 from src.tools import USE_REAL_DATA_ENV, parse_bool, data_mode, set_use_real_data
 
 _ENV_PATH = os.path.join(_project_root, ".env")
@@ -26,9 +28,9 @@ st.set_page_config(page_title="InvestAgent — 投研工作台", page_icon="📊
 # Invalidate session objects from the old dual-path UI on hot reload.
 if st.session_state.get("ui_version") != 2:
     st.session_state.update(ui_version=2, conversation_history=[], last_result=None,
-                            execution_events=[], report_progress={}, debug_events=[], turn_count=0)
+                            execution_events=[], report_progress={}, debug_events=[], analysis_snapshots={}, turn_count=0)
 for key, default in {"conversation_history": [], "last_result": None, "execution_events": [],
-                     "report_progress": {}, "debug_events": [], "turn_count": 0, "query_input": ""}.items():
+                     "report_progress": {}, "debug_events": [], "analysis_snapshots": {}, "turn_count": 0, "query_input": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = default
 if "use_real_data" not in st.session_state:
@@ -112,7 +114,9 @@ def _render_debug(state, debug):
             st.info("暂无 Market Data 内部事件；需运行新请求采集。")
 
 
-def _render_results(state, progress):
+def _render_results(state, progress, snapshots=None, render_id="final"):
+    if snapshots is None:
+        snapshots = st.session_state.get("analysis_snapshots", {})
     records = state.get("task_results", {})
     with answer_tab:
         if state.get("final_response"):
@@ -156,9 +160,11 @@ def _render_results(state, progress):
         if not found:
             st.info("尚无数据证据。")
     with analysis_tab:
-        st.caption("Analytics 已接入调度与回答汇总；图表展示待接入。Investment Strategy 仍为 unsupported。")
+        st.caption("分析图表来自已验证计算产物；仅在当前会话保留最近请求。Investment Strategy 仍为 unsupported。")
         for ident, record in records.items():
-            if record["category"] in {"analytics", "investment_strategy"}:
+            if record["category"] == "analytics":
+                render_analytics_task(ident, record, snapshots, render_id=render_id)
+            if record["category"] == "investment_strategy":
                 st.write(f"{ident}：{_LABELS.get(record['status'], record['status'])}")
             if record["category"] == "report":
                 payload = record.get("result") or {}
@@ -190,13 +196,13 @@ with st.sidebar:
     st.caption("摘要只在当前 Streamlit 会话内保留，刷新或服务重启后可能丢失。")
     if st.button("🔄 新对话", width="stretch"):
         st.session_state.update(conversation_history=[], last_result=None, execution_events=[],
-                                report_progress={}, debug_events=[], turn_count=0)
+                                report_progress={}, debug_events=[], analysis_snapshots={}, turn_count=0)
         st.rerun()
     st.caption(f"已完成 {st.session_state['turn_count']} 轮")
 
 st.title("📊 InvestAgent · 投研工作台")
 st.caption("Planner → Supervisor → Market Data / Report → Composer")
-st.info("数据查询、Analytics 与报告已接入调度；图表待适配，Investment Strategy 尚未接入。报告正文暂时隐藏。")
+st.info("数据查询、Analytics 与报告已接入调度；分析看板已接入，Investment Strategy 尚未接入。报告正文暂时隐藏。")
 if st.session_state["conversation_history"]:
     with st.expander("对话历史与上下文"):
         for turn in st.session_state["conversation_history"]:
@@ -226,6 +232,8 @@ if run_btn and user_query.strip():
     initial = create_parent_state(user_query, conversation_context=summary)
     current, progress, events = dict(initial), {}, []
     debug = []
+    snapshots = {}
+    render_seq = 0
     active_task = None
     active_category = None
     config = {}
@@ -244,6 +252,8 @@ if run_btn and user_query.strip():
         for namespace, mode, update in graph.stream(initial, config=config,
                 subgraphs=True, stream_mode=["updates", "custom"]):
             if mode == "custom":
+                if update.get("event") == "analysis_artifacts":
+                    snapshots.setdefault(update["task_id"], {}).update(update["artifacts"])
                 if update.get("event") == "task_started":
                     active_task, active_category = update["task_id"], update["category"]
                     debug.append({"step": len(debug) + 1, "node": "task_started", "task_id": active_task,
@@ -274,7 +284,8 @@ if run_btn and user_query.strip():
             # Render each view in its own replaceable tab container.
             old_tabs = (answer_tab, data_tab, analysis_tab, report_tab)
             answer_tab, data_tab, analysis_tab, report_tab = [c.container() for c in containers]
-            _render_results(current, progress)
+            render_seq += 1
+            _render_results(current, progress, snapshots, render_id=f"stream_{render_seq}")
             answer_tab, data_tab, analysis_tab, report_tab = old_tabs
             with debug_slot.container():
                 _render_debug(current, debug)
@@ -285,7 +296,7 @@ if run_btn and user_query.strip():
     except Exception:
         current.update(final_response="运行异常，已保留本轮可用任务结果，请重试。", composition_status="failed")
         status.update(label="研究执行异常", state="error")
-    st.session_state.update(last_result=current, report_progress=progress, execution_events=events, debug_events=debug,
+    st.session_state.update(last_result=current, report_progress=progress, execution_events=events, debug_events=debug, analysis_snapshots=snapshots,
                             turn_count=st.session_state["turn_count"] + 1)
     st.session_state["conversation_history"].append({"query": user_query.strip(),
         "response_preview": (current.get("final_response") or "")[:1200],

@@ -119,6 +119,12 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analyt
                     inputs = analytics_inputs(task, results, config)
                     raw = analytics.invoke(inputs, config=config)
                     status, result, error = analytics_result(raw, inputs, config)
+                    if result and result["analysis_refs"]:
+                        store = config["configurable"]["analysis_store"]
+                        snapshots = {ref["analysis_id"]: store.get(ref["analysis_id"]).model_dump(mode="json")
+                                     for ref in result["analysis_refs"]}
+                        get_stream_writer()({"event": "analysis_artifacts", "task_id": ident,
+                                             "artifacts": snapshots})
                 else:
                     params = state["report_parameters"].get(ident, {})
                     inputs = {"user_query": task["question"],

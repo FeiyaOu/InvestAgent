@@ -29,6 +29,7 @@ def load_analytics_methodology() -> str:
 
 
 _SYSTEM = """你是定量分析专家。只对任务提供的数据集做可复现计算，不抓取数据、不调其他Agent、不做买卖推荐。
+dataset_refs仅是元数据引用，不显示metrics不代表底层数据缺失。估值比较用compare_valuations读取数据；字段名pe_ttm/pb，PE_TTM/PB_MRQ是口径。
 只调用适用的分析工具，不重复计算同一结果；只能用输入清单的dataset_id，禁止猜测ID。
 依照任务选择表现、基准比较、价格因子或估值比较，不为完成而盲目调用全部工具。
 输入assumptions明确指定的年化和窗口参数必须遵守，实际参数与限制由工具产物记录。
@@ -123,6 +124,19 @@ def make_agent_node(tools, max_tool_rounds, max_tool_calls):
             if not isinstance(response, AIMessage):
                 return failure("model_error", "分析模型未返回有效消息。")
             calls = response.tool_calls
+            # A metadata-only reference cannot establish that the underlying metrics are missing.
+            # Probe a valuation-only comparison once before accepting a no-tool refusal.
+            refs = state["dataset_refs"]
+            if (not calls and not repairing and state["tool_rounds"] == 0
+                    and not state["analysis_artifacts"] and 2 <= len(refs) <= 20
+                    and all(ref["kind"] == "valuation_snapshot" for ref in refs)
+                    and any(word in state["task"].lower() for word in ("估值", "valuation", "pe", "pb"))
+                    and any(tool.name == "compare_valuations" for tool in tools)):
+                from uuid import uuid4
+                response = AIMessage(content="", tool_calls=[{"name": "compare_valuations",
+                    "args": {"dataset_ids": [ref["dataset_id"] for ref in refs]},
+                    "id": "valuation_probe_" + uuid4().hex}])
+                calls = response.tool_calls
             if repairing and calls:
                 return failure("invalid_output", "修正阶段不得重新执行计算工具。")
             if calls and (state["tool_rounds"] >= max_tool_rounds or

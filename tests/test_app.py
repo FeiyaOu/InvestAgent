@@ -143,3 +143,39 @@ def test_debug_views_show_plan_dispatch_and_market_tool_calls():
     assert any("Supervisor" in e.label for e in at.expander)
     assert any("Market Data" in e.label for e in at.expander)
     assert "messages" not in at.session_state["last_result"]
+
+
+def test_analytics_dashboard_charts_survive_rerun_without_reexecution():
+    from tests.test_analytics_dashboard import artifact
+    snapshot = artifact().model_dump(mode="json")
+    summary = {key: value for key, value in snapshot.items() if key != "series"}
+    summary["chart_refs"] = [{"analysis_id": "a1", "series_key": key} for key in snapshot["series"]]
+    payload = {"summary": "区间表现", "findings": [], "analysis_refs": [summary],
+               "dataset_refs": snapshot["dataset_refs"], "missing_information": [], "missing_data_requests": []}
+    graph = fake({"a": task("a", "analytics", result=payload)})
+    events = list(graph.stream.return_value)
+    events.insert(2, (("s",), "custom", {"event": "analysis_artifacts", "task_id": "a", "artifacts": {"a1": snapshot}}))
+    graph.stream.return_value = iter(events)
+    at = submit(graph)
+    assert len(at.get("plotly_chart")) == 2
+    assert any(item.label == "区间收益" for item in at.metric)
+    assert at.session_state["analysis_snapshots"]["a"]["a1"]["series"]
+    at.run()
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 2
+    assert graph.stream.call_count == 1
+    next(b for b in at.button if "新对话" in b.label).click()
+    at.run()
+    assert at.session_state["analysis_snapshots"] == {}
+
+
+def test_analytics_dashboard_missing_snapshot_preserves_metrics_without_fake_chart():
+    from tests.test_analytics_dashboard import artifact
+    data = artifact().model_dump(mode="json")
+    data.pop("series")
+    graph = fake({"a": task("a", "analytics", result={"summary": "表现", "analysis_refs": [data],
+        "dataset_refs": data["dataset_refs"], "missing_information": [], "missing_data_requests": []})})
+    at = submit(graph)
+    assert not at.get("plotly_chart")
+    assert any("没有可解析" in item.value for item in at.warning)
+    assert at.metric

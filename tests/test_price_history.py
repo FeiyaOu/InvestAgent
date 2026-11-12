@@ -94,3 +94,31 @@ def test_runtime_config_not_in_model_tool_schema():
     properties = get_price_history.tool_call_schema.model_json_schema()["properties"]
     assert "config" not in properties
     assert "dataset_store" not in properties
+
+
+def test_stock_history_uses_sina_when_eastmoney_disconnects(monkeypatch):
+    monkeypatch.setenv('USE_REAL_DATA', 'true')
+    provider = Mock()
+    provider.stock_zh_a_hist.side_effect = ConnectionError('private upstream message')
+    provider.stock_zh_a_daily.return_value = pd.DataFrame({'date': ['2025-01-02', '2025-01-03'],
+        'close': [100., 110.], 'volume': [200., 300.]})
+    store = DatasetStore()
+    with patch.dict(sys.modules, {'akshare': provider}):
+        result = fetch(store)
+    assert result['status'] == 'available'
+    data = store.get(result['dataset_ref']['dataset_id'])
+    assert data.provider == 'akshare/sina'
+    assert data.rows[0].volume == 200.  # Sina already reports shares.
+    assert data.adjustment == 'qfq'
+    provider.stock_zh_a_daily.assert_called_once_with(symbol='sh600519', start_date='20250102', end_date='20250103', adjust='qfq')
+
+
+def test_history_failure_reports_safe_exception_class(monkeypatch):
+    monkeypatch.setenv('USE_REAL_DATA', 'true')
+    provider = Mock()
+    provider.stock_zh_a_hist.side_effect = ConnectionError('secret')
+    provider.stock_zh_a_daily.side_effect = TimeoutError('secret')
+    with patch.dict(sys.modules, {'akshare': provider}):
+        result = fetch(DatasetStore())
+    assert 'TimeoutError' in result['error']['message']
+    assert 'secret' not in str(result)
