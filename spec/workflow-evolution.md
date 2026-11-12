@@ -745,3 +745,11 @@ AnalysisArtifact 增加比较表。Market Data 可收集真实注册估值引用
 仅传显式前置任务的canonical引用，并从实际存储重建数值产物包装TaskResult。
 Strategy仍unsupported。Planner的数据依赖细化、Composer分析消费及图表UI仍未完成。
 详见 [Analytics实施规格](analytics-agent.md) 步骤6；报告内部未改。
+
+
+## 28. Planner 分析数据依赖与 Composer 分析回答（2026-11-12）
+
+Planner补充价格/基准/估值采集规划规则、当前日期和可选analytics_parameters，
+生成计划须具备Analytics直接数据依赖；Supervisor传递结构化分析参数。
+Composer消费实际分析指标、单位、表格、假设、来源和缺失要求，模型失败时确定性保留。
+报告正文仍隐藏，图表UI未实现。详细契约/验证边界见 [Analytics实施规格](analytics-agent.md) 步骤7a。

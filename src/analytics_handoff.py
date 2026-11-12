@@ -38,8 +38,11 @@ def analytics_inputs(task: dict, results: dict, config: RunnableConfig) -> dict:
             if not {source["dataset_id"] for source in ref["dataset_refs"]} <= set(data_ids):
                 raise ValueError("前置分析产物来源超出前置任务数据范围")
             existing.append(ref)
-    return {"task": task["question"], "subjects": list(dict.fromkeys(ref["symbol"] for ref in refs)),
-            "time_range": "", "dataset_refs": refs, "existing_analysis_refs": existing, "assumptions": {}}
+    params = task.get("analytics_parameters") or {}
+    return {"task": task["question"],
+            "subjects": params.get("subjects") or list(dict.fromkeys(ref["symbol"] for ref in refs)),
+            "time_range": params.get("time_range", ""), "dataset_refs": refs,
+            "existing_analysis_refs": existing, "assumptions": params.get("assumptions", {})}
 
 
 def analytics_result(raw, inputs, config: RunnableConfig):

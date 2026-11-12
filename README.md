@@ -1,7 +1,7 @@
 # InvestAgent — LangGraph 投研助手
 
 用户输入由 Planner 拆为任务，Supervisor 调度 Market Data / Report 子图，Composer 汇总结果。
-数据查询、Analytics 和完整报告已接入调度；分析汇总/图表待适配，Investment Strategy 尚未接入。
+数据查询、Analytics 和完整报告已接入调度；分析汇总已接、图表待适配，Investment Strategy 尚未接入。
 原 Reactive 路径已移除。完整设计见 [主规格](spec/invest_spec.md) 与 [架构](spec/project-architecture.md)。
 
 ```text

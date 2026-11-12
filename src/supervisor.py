@@ -34,7 +34,7 @@ def _initialize(state: SupervisorState) -> dict:
     except (ValidationError, ValueError, TypeError, AttributeError):
         return {**clean, "supervisor_status": "failed",
                 "supervisor_error": _error("invalid_plan", "计划或报告参数无效，未执行任务。")}
-    return {**clean, "plan": plan.model_dump(), "report_parameters": params,
+    return {**clean, "plan": plan.to_state(), "report_parameters": params,
             "supervisor_status": "needs_clarification" if plan.status == "needs_clarification" else "running"}
 
 
@@ -137,7 +137,7 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analyt
                 status, result, error = "failed", None, _error("specialist_error", "专家执行或结果格式异常，请重试。")
         results[ident] = TaskResult.model_validate(
             {**task, "status": status, "result": result, "error": error}
-        ).model_dump()
+        ).to_state()
         return {"task_results": results, "last_task_id": ident}
 
     def route(state):

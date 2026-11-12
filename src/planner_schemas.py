@@ -3,8 +3,20 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import TypedDict
+from src.analytics_state import AnalyticsAssumptions
 
 TaskCategory = Literal["market_data", "analytics", "investment_strategy", "report"]
+
+
+class AnalyticsDependencyError(ValueError):
+    """A structurally valid plan cannot supply analytics task data."""
+
+
+class AnalyticsTaskParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    subjects: list[str] = Field(default_factory=list)
+    time_range: str = ""
+    assumptions: AnalyticsAssumptions = Field(default_factory=AnalyticsAssumptions)
 
 
 class PlanTask(BaseModel):
@@ -14,6 +26,13 @@ class PlanTask(BaseModel):
     category: TaskCategory
     question: str = Field(min_length=1)
     depends_on: list[str]
+    analytics_parameters: AnalyticsTaskParameters | None = None
+
+    @model_validator(mode="after")
+    def parameters_match_category(self):
+        if self.analytics_parameters is not None and self.category != "analytics":
+            raise ValueError("analytics_parameters 仅用于 analytics 任务")
+        return self
 
 
 class TaskPlan(BaseModel):
@@ -55,6 +74,23 @@ class TaskPlan(BaseModel):
             resolved.update(ready)
             remaining = {ident: deps for ident, deps in remaining.items() if ident not in ready}
         return self
+
+
+    def validate_analytics_dependencies(self) -> None:
+        """Planner rule: request-local analytics must get refs through direct dependencies.
+
+        Kept separate from generic TaskPlan validation so standalone Supervisor can
+        still return a structured missing-data result for a caller-supplied bare task.
+        """
+        categories = {task.task_id: task.category for task in self.tasks}
+        for task in self.tasks:
+            if task.category == "analytics" and not any(
+                categories[ident] in {"market_data", "analytics"} for ident in task.depends_on
+            ):
+                raise AnalyticsDependencyError(f"analytics 任务 {task.task_id} 必须直接依赖提供结构化数据的 market_data 或 analytics 任务")
+
+    def to_state(self) -> dict:
+        return self.model_dump(exclude_none=True)
 
 
 class PlannerState(TypedDict, total=False):

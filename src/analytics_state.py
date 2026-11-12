@@ -40,10 +40,19 @@ class AnalyticsAnswer(BaseModel):
     missing_data_requests: list[MissingDataRequest]
 
 
+class AnalyticsFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    analysis_id: str = Field(min_length=1)
+    tool_name: str = Field(min_length=1)
+    metrics: dict[str, float | None]
+    metric_units: dict[str, str]
+    table: list[dict] = Field(default_factory=list)
+
+
 class AnalyticsResult(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     summary: str
-    findings: list[dict]
+    findings: list[AnalyticsFinding]
     analysis_refs: list[dict]
     chart_refs: list[dict]
     dataset_refs: list[dict]

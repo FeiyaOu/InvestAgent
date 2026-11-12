@@ -33,6 +33,15 @@ class TaskResult(PlanTask):
         return self
 
 
+    def to_state(self) -> dict:
+        output = self.model_dump()
+        if self.analytics_parameters is None:
+            output.pop("analytics_parameters", None)
+        else:
+            output["analytics_parameters"] = self.analytics_parameters.model_dump(exclude_none=True)
+        return output
+
+
 def validate_task_results(records: dict[str, dict]) -> dict[str, dict]:
     """Validate map identity and detach nested payloads from caller-owned data."""
     if not isinstance(records, dict):
@@ -42,5 +51,5 @@ def validate_task_results(records: dict[str, dict]) -> dict[str, dict]:
         result = TaskResult.model_validate(raw)
         if key != result.task_id:
             raise ValueError("结果字典 key 必须与 task_id 一致")
-        validated[key] = deepcopy(result.model_dump())
+        validated[key] = deepcopy(result.to_state())
     return validated

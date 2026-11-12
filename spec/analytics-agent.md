@@ -17,8 +17,8 @@
 | Supervisor 调度 Analytics | 已完成 | 父图调用独立Analytics，Strategy仍unsupported |
 | 上游数据/分析引用交接 | 已完成首版 | 仅从显式前置任务收集canonical引用，去重并校验范围 |
 | 父图 AnalysisStore 注入 | 已完成 | 父图/已有计划执行图均按请求创建两个Store，不写入State |
-| Planner 的分析数据先决任务细化 | 未完成 | 已能分类/表达依赖，但尚未专门打通 Analytics 数据要求 |
-| Composer 分析结果汇总 | 未完成 | 独立子图输出存在，现有父级汇总尚未消费它 |
+| Planner 的分析数据先决任务细化 | 已完成首版 | 明确采集类型/区间/基准规则，规划输出检查Analytics直接数据依赖，仍需真实模型语义评估 |
+| Composer 分析结果汇总 | 已完成 | 展示实际指标、比较表、口径、来源与缺失要求；模型失败保留确定性结果 |
 | Streamlit/Plotly 分析图表 | 未完成 | chart_refs 和序列已具备，图表渲染及产物生命周期交接待实现 |
 | analytics-methodology skill | 已创建并接入独立子图 | 固定加载仓库方法文件，进入系统上下文；公式和验证仍在工具代码中 |
 | 真实模型/采集 API 的端到端评估 | 未执行 | 当前是确定性数值测试与 mock 模型/API 测试 |
@@ -406,3 +406,52 @@ Planner专门的数据先决任务规划、Composer分析结果消费、Plotly�
 测试覆盖依赖交接、产物复用、数据去重、假引用和篡改数值、无数据缺失路径、
 失败/Strategy未接入、父图双Store隔离，以及父图→MarketData测试采集→真实Analytics计算结构的mock模型链路。
 未调用真实模型或数据API。
+
+
+## 步骤7a：Planner 数据依赖与 Composer 分析汇总（2026-11-12 已实现）
+
+### Planner
+
+生成计划时要求每个analytics任务直接依赖market_data或analytics任务。
+检查在TaskPlan.validate_analytics_dependencies()执行，失败进入现有有界修正，耗尽则规划失败。
+通用TaskPlan验证仍允许手工提交无依赖Analytics任务，使独立Supervisor可返回结构化缺失要求；
+不把此回退误认为Planner已经提供数据。
+拓扑检查只能证明存在可传引用的前置类别，不能证明模型选择了正确数据或采集区间。
+
+Prompt明确要求历史表现/因子获取get_price_history数据，估值比较获取同观察日的get_valuation_snapshot，
+基准比较采集用户指定基准与标的共同区间；不把最新价或近30日文本摘要当作完整历史数据。
+以当前上海日期解释相对时间，区分去年自然年与过去一年；历史采集任务明确ISO起止日期。
+基准/区间不明确且影响回答时澄清，不为所有任务发明默认基准。
+同类多标的可共享采集，报告内部不重复拆成外部分析链，Strategy仍按类别规划但尚未接入。
+文本会话摘要不是可复用dataset_id；跨请求不复用已失效引用。
+
+PlanTask新增可选analytics_parameters，仅analytics类别允许包含：
+subjects、time_range、assumptions（使用已有AnalyticsAssumptions的窗口/年化/no_fill约束）。
+未指定时保留旧任务结构；TaskPlan.to_state / TaskResult.to_state 统一序列化可选参数，
+不删除必需的error=None等字段。Supervisor将参数通过analytics_handoff传给子图；
+用户未指定参数时继续由工具默认或子图选择，实际参数仍来自计算产物。
+参数含义、实际日期覆盖与数据适配的完整语义正确性仍需后续真实模型评估。
+
+### Composer
+
+先验证统一TaskResult，再验证AnalyticsResult；AnalyticsFinding约束数值有限、类型与单位结构。
+给模型的分析投影只包含解释、指标/表格、实际假设、来源元数据、样本/区间和缺失限制，
+不包含完整图表序列、局部消息或报告正文。
+模型仅汇总，不重新计算、填null或把低PE等同买入机会。
+
+无论模型是否成功，确定性逐任务部分保留：
+- 数值与单位，fraction转换百分数时同时保留原数值口径；percent不重复乘100。
+- 比较表的公司、指标、定义与缺失原因，不为不适用指标填零。
+- 分析区间、样本数（单位见实际假设）、requested/effective参数、来源与复权/数据模式。
+- limitations、missing_information和missing_data_requests。
+
+仅Analytics结果也可触发模型汇总，不再只显示完成状态；模型失败时fallback保留上述内容。
+报告负载仍按原规则隐藏，模型不接收report正文。
+UI本轮只更新能力说明，回答区域自然显示Composer新输出；Plotly图表与独立分析看板尚未实现。
+
+### 验证
+
+mock测试覆盖缺失数据依赖计划修正、仅report依赖拒绝、分析参数契约与适配、
+当前日期/采集规则注入、指标/单位/来源/缺失信息展示、模型失败回退及非有限数值拒绝。
+父图结构测试继续采用真实计算工具，检查最终回答含实际计算指标。
+未进行真实模型规划质量或真实行情端到端评估；动态补数据重规划仍未实现。

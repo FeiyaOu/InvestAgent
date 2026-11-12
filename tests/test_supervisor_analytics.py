@@ -151,13 +151,16 @@ def test_real_analytics_executes_with_market_produced_data_in_parent_graph():
     metric = state["task_results"]["a"]["result"]["findings"][0]["metrics"]["period_return"]
     assert abs(metric + .01) < 1e-10
     assert "analysis_store" not in state and "messages" not in state
+    assert "-1.00%" in state["final_response"]
 
 
 def test_unrelated_task_data_not_granted_and_tool_numbers_cannot_be_forged():
     _, _, ref, config, md = setup()
     created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
     forged = result(ref, {**created, "metrics": {"period_return": 999.}})
-    forged["result"]["findings"] = [{"metrics": {"period_return": 999.}}]
+    forged["result"]["findings"] = [{"analysis_id": created["analysis_id"],
+        "tool_name": created["tool_name"], "metrics": {"period_return": 999.},
+        "metric_units": {"period_return": "fraction"}, "table": []}]
     analytics = Mock(); analytics.invoke.return_value = forged
     state = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics).invoke({
         "plan": plan(task("m", "market_data"), task("a", "analytics", ["m"]))}, config=config)
@@ -169,3 +172,19 @@ def test_unrelated_task_data_not_granted_and_tool_numbers_cannot_be_forged():
     create_supervisor_graph(market_data_graph=md, analytics_graph=analytics).invoke({
         "plan": plan(task("m", "market_data"), task("a", "analytics"))}, config=config)
     assert analytics.invoke.call_args.args[0]["dataset_refs"] == []
+
+
+def test_planned_analytics_parameters_reach_subagent_and_task_result():
+    _, _, ref, config, md = setup()
+    created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
+    analytics = Mock(); analytics.invoke.return_value = result(ref, created)
+    analytical = task("a", "analytics", ["m"])
+    analytical["analytics_parameters"] = {"subjects": ["贵州茅台"], "time_range": "2025-01-01至2025-01-03",
+        "assumptions": {"periods_per_year": 252, "window": 20}}
+    state = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics).invoke({
+        "plan": plan(task("m", "market_data"), analytical)}, config=config)
+    inputs = analytics.invoke.call_args.args[0]
+    assert inputs["subjects"] == ["贵州茅台"]
+    assert inputs["time_range"] == "2025-01-01至2025-01-03"
+    assert inputs["assumptions"]["window"] == 20
+    assert state["task_results"]["a"]["analytics_parameters"]["assumptions"]["periods_per_year"] == 252

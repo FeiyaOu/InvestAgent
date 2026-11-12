@@ -133,3 +133,45 @@ def test_failed_task_error_is_displayed_without_model():
     assert "invalid_output" in result["final_response"]
     assert "证据引用" in result["final_response"]
     factory.assert_not_called()
+
+
+def analytical_record():
+    return record("a", "analytics", "partial", {"summary": "历史表现分析", "findings": [{
+        "analysis_id": "analysis1", "tool_name": "analyze_price_performance", "metrics": {
+            "period_return": .05, "annualized_volatility": None},
+        "metric_units": {"period_return": "fraction", "annualized_volatility": "fraction"}, "table": []}],
+        "analysis_refs": [{"analysis_id": "analysis1", "start_date": "2025-01-01", "end_date": "2025-12-31", "sample_size": 200}],
+        "chart_refs": [], "dataset_refs": [{"dataset_id": "d", "symbol": "600519", "provider": "test",
+            "start_date": "2025-01-01", "end_date": "2025-12-31", "data_mode": "mock", "adjustment": "qfq"}],
+        "assumptions": {"effective": {"analysis1": {"periods_per_year": 252}}},
+        "limitations": ["样本不足，历史不代表未来"], "missing_information": ["波动率不可用"],
+        "missing_data_requests": [{"kind": "price_history", "subjects": ["600519"], "time_range": "一年",
+                                   "reason": "补充有效样本"}]})
+
+
+def test_composer_includes_analytics_metrics_assumptions_and_limits():
+    chain = Mock(); chain.invoke.return_value = {"answer": "历史收益5%，部分指标不可用。"}
+    with patch("src.stages.composer._create_chain", return_value=chain):
+        result = composer(state(analytical_record()))
+    assert "5.00%" in result["final_response"]
+    for text in ("252", "波动率不可用", "样本不足", "mock", "qfq", "2025-12-31", "补充有效样本"):
+        assert text in result["final_response"]
+    assert "period_return" in chain.invoke.call_args.args[0]["task_results"]
+
+
+def test_analytics_metrics_remain_visible_when_composition_model_fails():
+    chain = Mock(); chain.invoke.side_effect = RuntimeError("offline")
+    with patch("src.stages.composer._create_chain", return_value=chain):
+        result = composer(state(analytical_record()))
+    assert result["composition_status"] == "fallback"
+    assert "5.00%" in result["final_response"]
+    assert "不可用" in result["final_response"]
+
+
+def test_invalid_numeric_analysis_is_rejected_without_model_call():
+    broken = analytical_record()
+    broken["result"]["findings"][0]["metrics"]["period_return"] = float("nan")
+    with patch("src.stages.composer._create_chain") as factory:
+        result = composer(state(broken))
+    assert result["composition_error"]["type"] == "invalid_task_results"
+    factory.assert_not_called()

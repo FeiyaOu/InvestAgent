@@ -236,6 +236,8 @@ python linters/check_agent_structure.py       # 结构 lint 检查
 ## Analytics 建设进展（2026-11-12）
 
 已完成数据契约、请求内存储、结构化价格/估值快照采集、四个V1计算工具和独立Analytics子图。
-analytics-methodology运行时skill已创建并固定加载；Supervisor调度/引用交接及父图双Store注入已完成；Planner数据依赖细化、Composer分析汇总及Plotly展示待完成。
+analytics-methodology运行时skill已创建并固定加载；Supervisor调度/引用交接及父图双Store注入已完成；Planner数据依赖首版与Composer分析汇总已完成；Plotly展示待完成。
 父图analytics已启用；未执行真实模型/API端到端评估。
 完整状态、无风险利率适用范围、样本不足及协方差产物边界见 [Analytics实施规格](analytics-agent.md)。
+
+Planner计划现在检查Analytics的直接数据依赖，并支持可选analytics_parameters；Composer展示分析指标、假设和限制，见Analytics规格步骤7a。

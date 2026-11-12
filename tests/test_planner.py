@@ -156,3 +156,49 @@ def test_no_retry_when_disabled_and_stale_plan_is_cleared():
     result, chain = invoke([{}], {"plan": plan(), "planning_status": "ready"}, max_retries=0)
     assert result["plan"] is None
     assert chain.invoke.call_count == 1
+
+
+def test_analytics_plan_without_data_predecessor_is_repaired():
+    result, chain = invoke([plan([task("a", "analytics")]),
+                          plan([task("d"), task("a", "analytics", ["d"])])])
+    assert result["planning_status"] == "ready"
+    assert result["planning_attempts"] == 2
+    assert "analytics" in chain.invoke.call_args.args[0]["correction"]
+
+
+def test_analytics_cannot_use_report_as_its_only_data_dependency():
+    result, _ = invoke([plan([task("r", "report"), task("a", "analytics", ["r"])])], max_retries=0)
+    assert result["planning_status"] == "failed"
+
+
+def test_structured_analytics_parameters_survive_plan_validation():
+    analytical = task("a", "analytics", ["d"])
+    analytical["analytics_parameters"] = {"subjects": ["600519"], "time_range": "2025-01-01至2025-12-31",
+        "assumptions": {"window": 20, "periods_per_year": 252}}
+    result, _ = invoke([plan([task("d"), analytical])])
+    params = result["plan"]["tasks"][1]["analytics_parameters"]
+    assert params["subjects"] == ["600519"]
+    assert params["assumptions"]["window"] == 20
+
+
+def test_report_task_rejects_analytics_parameters():
+    report = task("r", "report")
+    report["analytics_parameters"] = {"subjects": ["600519"]}
+    result, _ = invoke([plan([report])], max_retries=0)
+    assert result["planning_status"] == "failed"
+
+
+def test_planner_prompt_provides_current_date_and_collection_rules():
+    import json
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+    prompts = []
+    def respond(prompt):
+        prompts.append(prompt.to_messages())
+        return AIMessage(content=json.dumps(plan()))
+    with patch("src.stages.planner.create_llm", return_value=RunnableLambda(respond)):
+        result = planner({"user_query": "茅台股价"})
+    assert result["planning_status"] == "ready"
+    assert "get_price_history" in prompts[0][0].content
+    assert "get_valuation_snapshot" in prompts[0][0].content
+    assert "当前上海日期" in prompts[0][-1].content

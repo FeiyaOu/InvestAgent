@@ -59,7 +59,7 @@ def create_parent_graph(*, market_data_graph=None, report_graph=None, analytics_
         if update["planning_status"] in {"ready", "needs_clarification"}:
             # The existing planner already validates; keep the graph boundary explicit.
             checked = TaskPlan.model_validate(update["plan"])
-            return {**update, "plan": checked.model_dump()}
+            return {**update, "plan": checked.to_state()}
         return update
 
     graph = StateGraph(ParentState)

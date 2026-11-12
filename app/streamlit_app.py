@@ -156,7 +156,7 @@ def _render_results(state, progress):
         if not found:
             st.info("尚无数据证据。")
     with analysis_tab:
-        st.caption("Analytics 已接入调度；分析汇总与图表展示待接入。Investment Strategy 仍为 unsupported。")
+        st.caption("Analytics 已接入调度与回答汇总；图表展示待接入。Investment Strategy 仍为 unsupported。")
         for ident, record in records.items():
             if record["category"] in {"analytics", "investment_strategy"}:
                 st.write(f"{ident}：{_LABELS.get(record['status'], record['status'])}")
@@ -196,7 +196,7 @@ with st.sidebar:
 
 st.title("📊 InvestAgent · 投研工作台")
 st.caption("Planner → Supervisor → Market Data / Report → Composer")
-st.info("数据查询、Analytics 与报告已接入调度；分析汇总和图表待适配，Investment Strategy 尚未接入。报告正文暂时隐藏。")
+st.info("数据查询、Analytics 与报告已接入调度；图表待适配，Investment Strategy 尚未接入。报告正文暂时隐藏。")
 if st.session_state["conversation_history"]:
     with st.expander("对话历史与上下文"):
         for turn in st.session_state["conversation_history"]:
