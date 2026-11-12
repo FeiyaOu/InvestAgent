@@ -47,7 +47,7 @@ def test_dependency_order_and_partial_evidence_handoff():
 
 def test_unsupported_and_blocked_tasks_do_not_call_specialists():
     graph, md, _ = build()
-    state = graph.invoke({"plan": plan(task("a", "analytics"), task("b", deps=["a"]), task("s", "investment_strategy"))})
+    state = graph.invoke({"plan": plan(task("a", "investment_strategy"), task("b", deps=["a"]), task("s", "investment_strategy"))})
     assert state["task_results"]["a"]["status"] == "unsupported"
     assert state["task_results"]["b"]["status"] == "blocked"
     assert state["task_results"]["s"]["status"] == "unsupported"

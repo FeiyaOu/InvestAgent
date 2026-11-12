@@ -7,6 +7,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.config import get_stream_writer
 from pydantic import ValidationError
 
+from src.analytics_agent import create_analytics_agent
+from src.analytics_handoff import analytics_inputs, analytics_result
 from src.market_data_agent import create_market_data_agent
 from src.market_data_state import MarketDataResult
 from src.planner_schemas import TaskPlan
@@ -79,7 +81,7 @@ def _dependency_evidence(task, results):
     return evidence
 
 
-def create_supervisor_graph(*, market_data_graph=None, report_graph=None):
+def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analytics_graph=None):
     """Sequential dispatcher for a validated plan (max 12 tasks).
 
     Partial dependencies may proceed with their available evidence. Failed,
@@ -88,6 +90,7 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None):
     """
     market = create_market_data_agent() if market_data_graph is None else market_data_graph
     report = create_report_graph() if report_graph is None else report_graph
+    analytics = create_analytics_agent() if analytics_graph is None else analytics_graph
 
     def dispatch(state: SupervisorState, config: RunnableConfig) -> dict:
         results = dict(state["task_results"])
@@ -104,7 +107,7 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None):
         blocked = [dep for dep in task["depends_on"] if results[dep]["status"] not in {"completed", "partial"}]
         if blocked:
             status, error = "blocked", _error("dependency_failed", f"前置任务不可用：{', '.join(blocked)}")
-        elif category in {"analytics", "investment_strategy"}:
+        elif category == "investment_strategy":
             status, error = "unsupported", _error("capability_unavailable", f"{category} 能力尚未接入。")
         else:
             try:
@@ -112,6 +115,10 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None):
                     raw = market.invoke({"task": task["question"],
                                          "existing_evidence": _dependency_evidence(task, results)}, config=config)
                     status, result, error = _market_result(raw)
+                elif category == "analytics":
+                    inputs = analytics_inputs(task, results, config)
+                    raw = analytics.invoke(inputs, config=config)
+                    status, result, error = analytics_result(raw, inputs, config)
                 else:
                     params = state["report_parameters"].get(ident, {})
                     inputs = {"user_query": task["question"],

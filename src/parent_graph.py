@@ -4,6 +4,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
 from src.datasets import DatasetStore
+from src.analytics_artifacts import AnalysisStore
 from src.parent_state import ParentState, create_parent_state
 from src.planner_schemas import TaskPlan
 from src.stages.composer import composer
@@ -24,19 +25,19 @@ def _initialize(state: ParentState) -> dict:
                 "planning_error": {"type": "invalid_input", "message": "请输入非空问题，并检查上下文和报告参数格式。"}}
 
 
-def create_parent_graph(*, market_data_graph=None, report_graph=None):
+def create_parent_graph(*, market_data_graph=None, report_graph=None, analytics_graph=None):
     """Build a stateless parent; callers provide conversation context explicitly.
 
     invoke({"user_query": ...}) runs the full pipeline. stream(...,
     subgraphs=True) exposes execution progress. No legacy UI switch is made.
     """
-    execution = create_supervisor_graph(market_data_graph=market_data_graph, report_graph=report_graph)
+    execution = create_supervisor_graph(market_data_graph=market_data_graph, report_graph=report_graph, analytics_graph=analytics_graph)
 
     def supervise(state: ParentState, config: RunnableConfig) -> dict:
         try:
             # Store is runtime context, never a graph-state field or model argument.
             child_config = dict(config)
-            child_config["configurable"] = {**config.get("configurable", {}), "dataset_store": DatasetStore()}
+            child_config["configurable"] = {**config.get("configurable", {}), "dataset_store": DatasetStore(), "analysis_store": AnalysisStore()}
             output = execution.invoke({"plan": state["plan"],
                                        "report_parameters": state["report_parameters"]}, config=child_config)
             results = validate_task_results(output["task_results"])

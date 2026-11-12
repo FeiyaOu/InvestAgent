@@ -17,7 +17,7 @@ Planner 产生四类任务和依赖。Supervisor 是确定性顺序调度图，�
 | 类别 | 实现 | 当前状态 |
 |---|---|---|
 | market_data | src/market_data_agent.py | 已接入，工具循环与输出验证 |
-| analytics | 待建设 | unsupported |
+| analytics | src/analytics_agent.py | 已接入调度，分析汇总/图表待接 |
 | investment_strategy | 待建设 | unsupported |
 | report | src/report_graph.py | 已接入，原六节点流程 |
 
@@ -80,5 +80,7 @@ C8 为四类任务与有效计划，C9 为非空用户响应；结构 lint 检�
 
 ## Analytics 建设进展（2026-11-12）
 
-已确认的职责、V1/V2 工具及局部 State 见 [Analytics 实施规格](analytics-agent.md)。
-已完成数据契约、请求内 DatasetStore 和 Market Data 历史日线采集引用；V1表现/基准/因子/估值四个计算工具及价格/估值采集已实现首版；尚未接 Analytics Agent，Supervisor 中仍为 unsupported。
+已完成数据契约、请求内存储、结构化价格/估值快照采集、四个V1计算工具和独立Analytics子图。
+analytics-methodology运行时skill已创建并固定加载；Supervisor调度/引用交接及父图双Store注入已完成；Planner数据依赖细化、Composer分析汇总及Plotly展示待完成。
+父图analytics已启用；未执行真实模型/API端到端评估。
+完整状态、无风险利率适用范围、样本不足及协方差产物边界见 [Analytics实施规格](analytics-agent.md)。

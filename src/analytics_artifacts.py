@@ -47,6 +47,12 @@ class AnalysisStore:
         with self._lock:
             return self._items[analysis_id].model_copy(deep=True)
 
+    def get_ref(self, analysis_id: str) -> dict:
+        artifact = self.get(analysis_id)
+        ref = artifact.model_dump(mode="json", exclude={"series"})
+        ref["chart_refs"] = [{"analysis_id": analysis_id, "series_key": key} for key in artifact.series]
+        return ref
+
     def clear(self):
         with self._lock:
             self._items.clear()

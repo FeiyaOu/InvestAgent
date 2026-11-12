@@ -68,7 +68,7 @@ def test_invalid_user_input_does_not_call_models():
 
 
 def test_mixed_tasks_keep_success_and_unavailable_capability():
-    result, _, _, _, _ = execute(plan(task(), task("a", "analytics", ["m"])))
+    result, _, _, _, _ = execute(plan(task(), task("a", "investment_strategy", ["m"])))
     assert result["supervisor_status"] == "partial"
     assert result["task_results"]["a"]["status"] == "unsupported"
     assert "尚未接入" in result["final_response"]

@@ -7,7 +7,7 @@
 
 任务型智能投研助手：用户输入 → Planner → Supervisor → Composer。
 - 数据任务调用 Market Data 子图；明确报告请求调用原报告子图。
-- Analytics / Investment Strategy 待建设，当前返回 unsupported。
+- Analytics 已接入调度（汇总/图表待接）；Investment Strategy 当前返回 unsupported。
 - 无 checkpoint 自动记忆；Streamlit 显式传入本会话摘要。
 
 ## 关键文件导航

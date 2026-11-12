@@ -714,3 +714,34 @@ analyze_price_performance 与 compare_with_benchmark 已独立实现，指标与
 新增 compute_factors、get_valuation_snapshot、compare_valuations；估值指标增加 basis 元数据，
 AnalysisArtifact 增加比较表。Market Data 可收集真实注册估值引用；Analytics Agent 仍待建设，
 报告内部保持不变。公式、来源、可比性与限制见 [Analytics 实施规格](analytics-agent.md)。
+
+
+## 24. 独立 Analytics 子图（2026-11-12）
+
+四工具的局部 ReAct 子图、输入/产物范围验证、有界执行与缺失数据要求已实现。
+数值和图表引用取自实际 AnalysisStore，输出修正不重新计算。
+详见 [Analytics 实施规格](analytics-agent.md) 步骤4–5。尚未接入 Supervisor/UI，报告内部未改。
+
+
+## 25. Analytics 完成与未完成状态核对（2026-11-12）
+
+[Analytics实施规格](analytics-agent.md) 顶部维护当前状态清单及设计原则落实情况。
+独立四工具/数据层/子图已完成，父级调度、产物交接、分析汇总、图表与methodology skill未完成。
+明确区分“产物可绘图”与“已接UI”、“比较工具支持字段”与“已采集字段”。
+当前不需要无风险利率，独立协方差矩阵未提供，真实模型/API端到端验证未执行。
+本次仅同步文档，未改变运行状态。
+
+
+## 26. Analytics 方法型 skill 接入（2026-11-12）
+
+已创建 research_skills/analytics-methodology/SKILL.md，独立 Analytics 子图在有效请求初始化时固定加载到系统上下文。
+工具选择、解释和缺失处理由方法指导，公式/权限/预算仍由代码控制；文件缺失明确失败。
+状态及部署/测试边界见 [Analytics实施规格](analytics-agent.md)。父级调度与UI尚未接入，报告不改。
+
+
+## 27. Analytics 调度与共享引用接入（2026-11-12）
+
+父图/已有计划执行图按请求注入DatasetStore和AnalysisStore；Supervisor已调度Analytics，
+仅传显式前置任务的canonical引用，并从实际存储重建数值产物包装TaskResult。
+Strategy仍unsupported。Planner的数据依赖细化、Composer分析消费及图表UI仍未完成。
+详见 [Analytics实施规格](analytics-agent.md) 步骤6；报告内部未改。

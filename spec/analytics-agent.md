@@ -1,6 +1,48 @@
 # Analytics Agent 实施规格
 
-日期：2026-11-12。方案已确认，分步建设。当前完成步骤1及步骤2的日线历史价格采集，V1四个计算工具及价格/估值采集均已实现首版；尚无 Analytics Agent，完整财报采集仍未实现。
+更新日期：2026-11-12。以下状态以代码与 mock/数值测试为依据，不代表真实 API 或浏览器端到端验证。
+
+## 当前完成情况
+
+| 项目 | 状态 | 实际边界 |
+|---|---|---|
+| 结构化历史价格/基准/估值契约 | 已完成首版 | 含日期、来源、单位、复权/指标定义及 real/mock |
+| DatasetStore / AnalysisStore | 已完成 | 请求内内存存储，不是跨请求持久化 |
+| Market Data 结构化采集 | 已完成首版 | 个股/指数日线、PE TTM/PB MRQ快照；不是完整财报来源 |
+| analyze_price_performance | 已完成 | 区间收益、年化波动率、回撤及序列 |
+| compare_with_benchmark | 已完成 | 超额收益、beta、相关性、tracking error及比较序列 |
+| compute_factors | 已完成 | 动量、均线偏离、滚动波动率、量比 |
+| compare_valuations | 已完成 | 逐公司表、可比口径下的中位数/差值，不给买卖结论 |
+| 独立 Analytics 子图 | 已完成 | 四工具循环、引用范围验证、有界执行、结构化缺失要求与输出校验 |
+| Supervisor 调度 Analytics | 已完成 | 父图调用独立Analytics，Strategy仍unsupported |
+| 上游数据/分析引用交接 | 已完成首版 | 仅从显式前置任务收集canonical引用，去重并校验范围 |
+| 父图 AnalysisStore 注入 | 已完成 | 父图/已有计划执行图均按请求创建两个Store，不写入State |
+| Planner 的分析数据先决任务细化 | 未完成 | 已能分类/表达依赖，但尚未专门打通 Analytics 数据要求 |
+| Composer 分析结果汇总 | 未完成 | 独立子图输出存在，现有父级汇总尚未消费它 |
+| Streamlit/Plotly 分析图表 | 未完成 | chart_refs 和序列已具备，图表渲染及产物生命周期交接待实现 |
+| analytics-methodology skill | 已创建并接入独立子图 | 固定加载仓库方法文件，进入系统上下文；公式和验证仍在工具代码中 |
+| 真实模型/采集 API 的端到端评估 | 未执行 | 当前是确定性数值测试与 mock 模型/API 测试 |
+
+## 设计原则落实与剩余边界
+
+- **采集复用 Market Data**：Analytics 无行情 API，也不调用 Market Data Agent。
+  它只读取外部提供的结构化引用；文本摘要不足以计算。跨 Agent 的采集依赖仍由未来父级接线负责。
+- **pandas/NumPy 优先**：已落实，未引入 TA-Lib，未暴露大量独立指标工具。
+- **图表就绪产物**：累计收益、回撤、基准和因子序列在 AnalysisStore；
+  比较表在产物中。数据就绪不代表 Streamlit 已绘图或跨请求可恢复。
+- **假设显式化**：保留数据复权口径、年化参数、基准 dataset_ref、样本数、单位、
+  无填充策略与实际工具参数，模型文字不能替代这些元数据。
+- **无风险利率暂不需要**：V1没有 Sharpe ratio 或 CAPM 预期收益；beta计算不需要该参数。
+  后续新增依赖无风险利率的指标时再显式加入，不默认编造一个值。
+- **代码验证输入**：按工具拒绝不兼容日期/币种/收益或估值定义。
+  样本不足不总是整项拒绝：两个价格可算区间收益，波动率为null并说明；
+  基准共同日期不足则拒绝比较。不填零、不输出NaN、不让模型猜算。
+- **优化职责分离**：未引入 PyPortfolioOpt/HRP/Black-Litterman，留给未来 Strategy/Risk。
+- **协方差输出未实现**：现有工具仅在内部使用相关统计量，不提供独立协方差矩阵产物；
+  未来组合优化确有需要时再建设，不把它当作当前已交付能力。
+- **估值数据限制**：现有源无明确股息率，增长、ROE、EPS采集尚未完成。
+  比较工具可处理符合契约的这些指标，但不代表系统已能从真实来源获取它们。
+- **解释质量限制**：引用及数值来源经代码校验；自由文字的完整性、准确性仍需真实模型评估。
 
 ## 职责与依赖
 
@@ -14,14 +56,14 @@ Strategy 还应接收相关原始定性证据，不能只依赖 Analytics 摘要
 
 1. **数据契约与请求内存储：已完成**，见下节。
 2. **日线采集已完成**：共享工具层新增结构化采集工具，Market Data 返回数据集引用；原报告工具保持兼容。估值快照已补齐，完整财报采集不在首版范围。
-3. **V1 工具已独立实现**：表现、基准、小目录因子及估值比较；尚未接 Analytics 子图。
-4. 独立 Analytics 子图，采用局部状态、工具循环、预算和输出验证，修正阶段不重新执行工具。
-5. 独立测试数值、图表产物来源、缺失数据与失败行为。
-6. Supervisor 接入 Analytics 及 dataset / analysis 引用交接，暂不改报告内部。
+3. **V1 工具已独立实现**：表现、基准、小目录因子及估值比较；已接独立 Analytics 子图，尚未接父级调度。
+4. **独立子图已完成**，局部状态、工具循环、预算和输出验证；修正阶段不重新执行工具。
+5. **首版独立测试已完成**，覆盖真实计算产物、缺失数据、权限边界和失败行为；尚无真实模型语义评估。
+6. **已完成首版调度接线**：共享存储、引用交接及AnalyticsResult→TaskResult边界验证，报告不改。
 7. Planner / Composer / UI 接入计划依赖、分析解释及 Plotly 图表。
 8. 按数据成熟度建设 V2。
 
-## V1 工具（待实现）
+## V1 工具（已独立实现，未接父级调度）
 
 | 工具 | 内容 |
 |---|---|
@@ -31,7 +73,7 @@ Strategy 还应接收相关原始定性证据，不能只依赖 Analytics 摘要
 | compare_valuations | PE/PB/股息率、增长和盈利质量比较；不可用指标说明原因 |
 
 pandas / NumPy 优先，TA-Lib 按具体指标需求后加。
-收益年化、无风险利率、频率、缺失处理、复权口径、基准和有效样本数必须明确。
+收益年化、频率、缺失处理、复权口径、基准和有效样本数必须明确；仅在指标需要时加入无风险利率。
 工具只读取结构化数据，返回数值与图表序列，不让模型从文本摘要猜数字。
 
 ## V2 工具（待实现）
@@ -223,7 +265,144 @@ sample_size 在表现工具是收益间隔数，在估值比较是公司数，�
 
 ### 本轮范围与验证
 
-Analytics Agent、Supervisor analytics dispatch、AnalysisStore 的父图注入及 Plotly 看板尚未接入。
+独立 Analytics Agent 已完成；Supervisor analytics dispatch、AnalysisStore 的父图注入及 Plotly 看板尚未接入。
 报告内部未改，不因新增工具而声称估值研究已端到端上线。
 测试使用 mock 供应商与可手算序列，覆盖因子值/无前视/缺失量、估值口径、日期、缺失值、
 非正PE、未知定义、静态PE不可替代、来源失败及 Market Data 引用收集。未调用真实数据 API。
+
+
+## 步骤4–5：独立 Analytics 子图（2026-11-12 已实现）
+
+### 入口与局部状态
+
+`src/analytics_agent.py:create_analytics_agent()` 构建 initialize → agent ↔ tools → finalize 子图。
+`src/stages/analytics.py` 包含模型节点，`src/analytics_state.py` 定义输入与输出模型。
+默认工具为 V1 四个计算工具，不含市场 API 或其他 Agent 的调用接口。
+不设置 checkpoint；独立任务在 initialize 清空旧消息、计数器和计算结果。
+
+输入 task、subjects、time_range、dataset_refs、existing_analysis_refs、assumptions。
+引用字典的 ID 在运行时存储解析，元数据以 store 的 canonical ref 为准，
+而不是信任调用方提交的数值或来源。数据引用不可重复，过期或跨存储实例引用明确失败。
+existing_analysis_refs 仅允许基于本任务 dataset_refs 的产物；已明确指定参数与旧产物不一致时拒绝复用。
+现有 input 必须显式列出复用产物所依赖的数据，不从一个裸 analysis_id 自动扩大数据权限。
+
+assumptions 首版支持可选 periods_per_year（1–366）、window（2–252）及固定 missing_data=no_fill。
+显式指定的参数在适用工具执行前覆盖模型选择，未指定时保留模型选择/工具默认值。
+实际计算假设由每个 canonical 分析产物保留，输入假设不代替实际参数。
+
+### 数据与工具范围
+
+调用者通过 RunnableConfig.configurable 提供同请求 dataset_store 和 analysis_store。
+无输入数据/已有产物时，不调用模型，直接 partial + MissingDataRequest，交由未来父级处理。
+有引用但没有运行时存储则 missing_store；无效输入/引用在计算前终止。
+工具只能访问输入清单中的数据 ID；尝试访问其他 ID 返回 dataset_scope_error，不执行该批。
+工具返回产物 ID 必须能在 AnalysisStore 找到，且其源数据不超出任务范围。
+输入/输出 State 不保存 DataFrame 或完整图表序列。
+
+默认最多3轮工具、累计8次调用、1次输出修正；可配置上限分别为5/20/2，允许0。
+修正时不绑定工具，仍返回工具调用时直接 invalid_output，不重复计算。
+预算只控制次数，不是墙钟超时。不进行自动采集、重新规划、任务级重试或长期缓存。
+
+### 结果与缺失要求
+
+模型只输出 summary、analysis_ids、missing_information、missing_data_requests。
+最终 findings 的数值、单位和比较表，analysis_refs、chart_refs、有效假设和限制，
+全部从实际存储产物构造，不由模型回填或篡改。解释文字仍需后续真实模型质量评估。
+未引用实际产物且未说明缺失信息的回答不通过；未知/重复 analysis_ids 不通过。
+
+MissingDataRequest 字段：kind（price_history/benchmark_history/valuation_snapshot/unspecified）、
+subjects、time_range、reason。缺数据不触发跨 Agent 调用。
+
+输出 result 包含 summary、findings、analysis_refs、chart_refs、dataset_refs、assumptions、
+limitations、missing_information、missing_data_requests。
+status 为 running / completed / partial / failed；工具错误、模拟输入、不可定义指标、
+缺失信息或没有可用计算结果使最终状态 partial；失败返回结构化 error。
+历史表现不代表未来等通用限制仍保留，但不单独将所有正常结果标为 partial。
+
+```python
+from src.analytics_agent import create_analytics_agent
+from src.analytics_artifacts import AnalysisStore
+
+# datasets 是当前请求 DatasetStore，price_ref 是其中已注册的 DatasetRef。
+# state = create_analytics_agent().invoke({
+#     "task": "分析该股票历史表现", "dataset_refs": [price_ref.model_dump(mode="json")]
+# }, config={"configurable": {"dataset_store": datasets, "analysis_store": AnalysisStore()}})
+```
+
+### 验证与下一步
+
+测试使用真实确定性工具 + fake LLM，覆盖数值引用、图表来源、无数据、过期/外部数据、
+假设覆盖和复用冲突、工具失败、模拟/短样本、预算、输出修正、虚构 ID、任务消息隔离。
+未运行真实数据 API 或真实模型分类/解释评估。
+本轮不改 Supervisor、Planner、Composer 或 UI；父图仍将 analytics 返回 unsupported。
+下一步单独实现 Supervisor 的 Analytics dispatch、数据引用交接及 AnalysisStore 注入，
+之后适配 Composer 和图表展示；报告子图内部仍保持不变。
+
+
+## Analytics 方法型 skill（2026-11-12 已实现）
+
+方法文件位于 `research_skills/analytics-methodology/SKILL.md`，属于应用运行时资源，
+不安装到开发者个人 Codex skills，也不依赖客户端的斜杠命令。
+
+覆盖四工具选择、先决数据、任务区间与基准确认、参数及产物复用、
+fraction解释、模拟/短样本/估值口径限制、缺失数据要求与Strategy/Risk职责边界。
+不重复维护计算公式实现，不赋予新工具权限，不改变输出schema或执行预算。
+
+`src/stages/analytics.py:load_analytics_methodology()` 从基于模块位置的固定仓库路径读取，
+移除可选frontmatter，正文作为独立SystemMessage进入Analytics上下文。
+无模型控制的路径或动态skill搜索；每个有效可执行请求读取一次，不缓存，修改文件对下一次请求生效。
+源schema和方法内容分别注入，不将方法文件当作str.format模板处理。
+
+文件缺失、不可读、空正文或frontmatter未闭合时，返回methodology_unavailable，
+不调用模型。无数据请求原本就不调用模型，直接返回缺失要求，无需读取方法文件。
+部署必须携带research_skills目录，不能只复制src。
+
+测试验证方法正文实际进入系统消息、原schema保留、加载不受cwd影响、
+文件修改后重新读取、缺失/空文件处理。skill通过结构校验；未做真实模型效果对比。
+尚未接Supervisor/UI的状态不变，原报告内部不改。
+
+
+## 步骤6：共享存储与 Supervisor 接入（2026-11-12 已实现）
+
+### 请求内存储
+
+create_parent_graph() 和 create_response_graph() 的执行边界每请求新建 DatasetStore / AnalysisStore，
+经configurable传入Supervisor及子图。两个实例在同请求的任务间共享，在不同请求间隔离，
+不写入ParentState、提示词或任务结果。
+直接调用Supervisor仍由调用方提供存储；无引用的Analytics任务可返回缺失要求而无需创建模型。
+
+### 调度与交接
+
+Supervisor新增analytics_graph可选注入，默认使用create_analytics_agent()，不再把analytics标为unsupported。
+只有investment_strategy继续unsupported。现有顺序调度、partial允许继续、失败阻断下游规则不变。
+
+src/analytics_handoff.py实现边界：
+- 只从任务depends_on里的market_data / analytics结果收集dataset_refs；
+  analytics前置结果另提供analysis_refs作为existing_analysis_refs。
+- 引用按ID去重，在当前Store重新解析取canonical元数据，不从文本摘要猜数据，
+  不授予未声明前置任务的数据，不从report内部拿数据或替换其研究阶段。
+- analytics链的前置result携带其源dataset_refs，因此可沿显式依赖继续复用产物。
+- task传原问题，subjects取canonical数据的symbol，time_range暂留空、assumptions暂为空；
+  精确的时间/窗口/年化等参数从Planner传入仍属下一阶段，不宣称已完成结构化提取。
+- 无数据引用仍调用Analytics的确定性缺失路径，返回partial和missing_data_requests，
+  不自动采集、不重新规划、不把数据不足当作分析完成。
+
+### 输出边界
+
+AnalyticsResult先经Pydantic验证，结果声明的数据ID不得超出输入范围。
+analysis_refs必须存在于当前AnalysisStore且其所有来源数据在输入范围。
+边界再次从Store重建findings数值、单位、表格、chart_refs、有效假设和产物限制；
+即使返回载荷携带篡改数值也不会作为canonical结果进入TaskResult。
+重复、未知、过期或越界引用导致任务失败，独立任务继续，依赖任务阻断。
+子图结构化错误保留；模拟数据、未定义指标、缺失要求或无产物不会升级为completed。
+外层仍只向父图返回task_results、supervisor_status、supervisor_error。
+
+### 未完成内容与验证
+
+Planner专门的数据先决任务规划、Composer分析结果消费、Plotly图表/序列生命周期仍待下一步。
+现有Composer尚不会展示Analytics findings；UI仅修正能力状态说明，未新增图表功能。
+原报告内部未改。请求结束后完整图表序列未持久化，裸chart_refs不能跨请求解析。
+
+测试覆盖依赖交接、产物复用、数据去重、假引用和篡改数值、无数据缺失路径、
+失败/Strategy未接入、父图双Store隔离，以及父图→MarketData测试采集→真实Analytics计算结构的mock模型链路。
+未调用真实模型或数据API。
