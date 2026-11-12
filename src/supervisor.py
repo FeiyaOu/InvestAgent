@@ -45,7 +45,7 @@ def _market_result(raw):
         except ValidationError:
             error = _error("specialist_failed", "数据查询失败。")
         return "failed", None, error
-    result = MarketDataResult.model_validate(raw.get("result")).model_dump()
+    result = MarketDataResult.model_validate_json(json.dumps(raw.get("result"))).model_dump(mode="json")
     return raw["status"], result, None
 
 

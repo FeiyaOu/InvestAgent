@@ -5,7 +5,7 @@ from src.market_data_state import MarketDataState
 from src.stages.market_data import (
     initialize, make_agent_node, make_finalize_node, make_tools_node,
 )
-from src.tools import INVEST_TOOLS
+from src.tools import INVEST_TOOLS, get_price_history
 
 
 def create_market_data_agent(*, tools=None, max_tool_rounds: int = 3,
@@ -17,7 +17,7 @@ def create_market_data_agent(*, tools=None, max_tool_rounds: int = 3,
     """
     if max_tool_rounds < 0 or max_tool_calls < 0 or max_output_retries < 0:
         raise ValueError("执行预算不得为负数")
-    tools = list(INVEST_TOOLS if tools is None else tools)
+    tools = list([*INVEST_TOOLS, get_price_history] if tools is None else tools)
     graph = StateGraph(MarketDataState)
     graph.add_node("initialize", initialize)
     graph.add_node("agent", make_agent_node(tools, max_tool_rounds, max_tool_calls))

@@ -76,3 +76,9 @@ C8 为四类任务与有效计划，C9 为非空用户响应；结构 lint 检�
 - 单元与 AppTest 测试全部 mock 外部模型/API。
 - integration 显式启用并要求真实 key，不在日常单元检查中运行。
 - 启动：make run；验证：pytest tests/ -q、python linters/check_agent_structure.py。
+
+
+## Analytics 建设进展（2026-11-12）
+
+已确认的职责、V1/V2 工具及局部 State 见 [Analytics 实施规格](analytics-agent.md)。
+已完成数据契约、请求内 DatasetStore 和 Market Data 历史日线采集引用；计算工具待建设，Analytics 在 Supervisor 中仍为 unsupported。

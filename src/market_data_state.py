@@ -5,6 +5,7 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
+from src.datasets import DatasetRef
 
 
 class MarketDataAnswer(BaseModel):
@@ -28,6 +29,7 @@ class MarketEvidence(BaseModel):
 
 class MarketDataResult(MarketDataAnswer):
     evidence: list[MarketEvidence]
+    dataset_refs: list[DatasetRef] = Field(default_factory=list)
 
 
 class MarketDataState(TypedDict, total=False):
@@ -40,6 +42,7 @@ class MarketDataState(TypedDict, total=False):
     tool_calls_used: int
     output_retries: int
     evidence: list[dict]
+    dataset_refs: list[dict]
     result: dict | None
     status: Literal["running", "completed", "partial", "failed"]
     error: dict | None

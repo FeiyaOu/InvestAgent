@@ -80,7 +80,7 @@ def _debug_details(values):
             details["messages"].append(item)
     result = values.get("result")
     if isinstance(result, dict) and "answer" in result and "evidence_ids" in result:
-        details["validated_result"] = {key: result.get(key) for key in ("answer", "evidence_ids", "missing_information")}
+        details["validated_result"] = {key: result.get(key) for key in ("answer", "evidence_ids", "missing_information", "dataset_refs")}
     if "task_results" in values:
         details["tasks"] = [{"task_id": ident, "category": r["category"], "depends_on": r["depends_on"],
                              "status": r["status"], "error": r.get("error")}
@@ -142,6 +142,9 @@ def _render_results(state, progress):
                 found = True
                 st.markdown(f"**{ident} · {record['question']}**")
                 st.write(payload.get("answer", "数据查询未完成。"))
+                for ref in payload.get("dataset_refs", []):
+                    st.markdown("**已注册历史数据集（仅本次请求有效）**")
+                    st.json(ref)
                 for evidence in payload.get("evidence", []):
                     st.json(evidence)
                 for missing in payload.get("missing_information", []):

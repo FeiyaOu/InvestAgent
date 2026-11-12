@@ -1,6 +1,10 @@
 """Market-data agent nodes; no direct provider API access."""
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+from langchain_core.runnables import RunnableConfig
+from src.datasets import DatasetStore
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
@@ -11,7 +15,7 @@ from src.market_data_state import MarketDataAnswer, MarketDataResult, MarketData
 from src.tools import data_mode
 
 _SYSTEM = """你是市场数据专家，只收集、核实并整理证据，不做投资建议或因子计算。
-按任务选择必要工具，避免重复查询。不把模拟数据、错误提示或过期数据称为实时事实。
+按任务选择必要工具，避免重复查询。需要历史价格或后续量化数据时选择 get_price_history，明确日期及复权口径；指数使用 adjustment=none。数据集引用由程序收集，不在最终 JSON 中自行生成 dataset_refs。不把模拟数据、错误提示或过期数据称为实时事实。
 工具只能提供现有能力；无法获取时明确说明缺失信息，不编造来源、日期或数值。
 最终仅输出 JSON，格式为：
 {schema}
@@ -43,11 +47,12 @@ def initialize(state: MarketDataState) -> dict:
     # New invocation starts an independent task; no checkpointer is installed here.
     return {"messages": [SystemMessage(content=_SYSTEM.format(
                 schema=json.dumps(MarketDataAnswer.model_json_schema(), ensure_ascii=False))),
-            HumanMessage(content=json.dumps({"task": task, "subject": state.get("subject", ""),
+            HumanMessage(content=json.dumps({"task": task, "current_date": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
+                "subject": state.get("subject", ""),
                 "time_range": state.get("time_range", ""),
                 "existing_evidence": existing}, ensure_ascii=False))],
             "tool_rounds": 0, "tool_calls_used": 0, "output_retries": 0,
-            "existing_evidence": existing, "evidence": [], "result": None, "error": None, "status": "running"}
+            "existing_evidence": existing, "evidence": [], "dataset_refs": [], "result": None, "error": None, "status": "running"}
 
 
 def make_agent_node(tools, max_tool_rounds: int, max_tool_calls: int):
@@ -74,18 +79,32 @@ def make_agent_node(tools, max_tool_rounds: int, max_tool_calls: int):
 def make_tools_node(tools):
     executor = ToolNode(tools, handle_tool_errors=True)
 
-    def execute(state: MarketDataState) -> dict:
+    def execute(state: MarketDataState, config: RunnableConfig) -> dict:
         try:
-            update = executor.invoke(state)
+            update = executor.invoke(state, config=config)
             evidence = list(state["evidence"])
+            refs = {ref["dataset_id"]: ref for ref in state.get("dataset_refs", [])}
+            store = (config.get("configurable") or {}).get("dataset_store")
             for message in update["messages"]:
                 if isinstance(message, ToolMessage):
                     content = message.content if isinstance(message.content, str) else json.dumps(message.content, ensure_ascii=False)
+                    unavailable = False
+                    metadata = None
+                    if message.name == "get_price_history" and getattr(message, "status", "") != "error":
+                        payload = json.loads(content)
+                        unavailable = payload.get("status") != "available"
+                        if not unavailable:
+                            if not isinstance(store, DatasetStore):
+                                raise ValueError("dataset store unavailable")
+                            metadata = store.get_ref(payload["dataset_ref"]["dataset_id"]).model_dump(mode="json")
+                            refs[metadata["dataset_id"]] = metadata
                     evidence.append({"tool_call_id": message.tool_call_id,
                         "tool_name": message.name or "unknown", "content": content,
                         "retrieved_at": datetime.now(timezone.utc).isoformat(),
-                        "status": "error" if getattr(message, "status", "") == "error" else "returned",
-                        "data_mode": data_mode(), "source_url": None, "as_of_date": None})
+                        "status": "error" if unavailable or getattr(message, "status", "") == "error" else "returned",
+                        "data_mode": metadata["data_mode"] if metadata else data_mode(),
+                        "source_url": metadata["source_url"] if metadata else None,
+                        "as_of_date": metadata["end_date"] if metadata else None})
             manifest = [{"evidence_id": item["tool_call_id"], "tool_name": item["tool_name"]}
                         for item in evidence + state.get("existing_evidence", [])]
             guidance = HumanMessage(content=(
@@ -93,6 +112,7 @@ def make_tools_node(tools):
                 "。最终 evidence_ids 必须逐字复制清单中的 evidence_id，不要自行命名。"
                 "已有数据足够时直接输出最终 JSON，不要重复查询相同数据；仅缺少必要数据时调用新工具。"))
             return {"messages": update["messages"] + [guidance], "evidence": evidence,
+                    "dataset_refs": list(refs.values()),
                     "tool_rounds": state["tool_rounds"] + 1,
                     "tool_calls_used": state["tool_calls_used"] + len(state["messages"][-1].tool_calls)}
         except Exception:
@@ -101,7 +121,7 @@ def make_tools_node(tools):
 
 
 def make_finalize_node(max_output_retries: int):
-    def finalize(state: MarketDataState) -> dict:
+    def finalize(state: MarketDataState, config: RunnableConfig) -> dict:
         try:
             content = state["messages"][-1].content
             # Accept a complete Markdown JSON fence, while keeping JSON parsing strict.
@@ -118,11 +138,13 @@ def make_finalize_node(max_output_retries: int):
             if not answer.evidence_ids and not answer.missing_information:
                 raise ValueError("没有证据时必须说明缺失信息")
             # Retain all raw tool evidence for audit and frontend display.
-            result = MarketDataResult(**answer.model_dump(), evidence=evidence)
+            store = (config.get("configurable") or {}).get("dataset_store")
+            refs = [store.get_ref(ref["dataset_id"]) for ref in state.get("dataset_refs", [])]
+            result = MarketDataResult(**answer.model_dump(), evidence=evidence, dataset_refs=refs)
             degraded = any(item.status == "error" or any(marker in item.content for marker in
                 ("暂时无法", "无法获取", "调用异常", "模拟", "mock")) or item.data_mode != "real"
                 for item in result.evidence)
-            return {"result": result.model_dump(), "error": None,
+            return {"result": result.model_dump(mode="json"), "error": None,
                     "status": "partial" if degraded or answer.missing_information else "completed"}
         except (ValidationError, ValueError, TypeError, KeyError) as exc:
             if isinstance(exc, ValidationError):

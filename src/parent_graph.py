@@ -3,6 +3,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
+from src.datasets import DatasetStore
 from src.parent_state import ParentState, create_parent_state
 from src.planner_schemas import TaskPlan
 from src.stages.composer import composer
@@ -33,8 +34,11 @@ def create_parent_graph(*, market_data_graph=None, report_graph=None):
 
     def supervise(state: ParentState, config: RunnableConfig) -> dict:
         try:
+            # Store is runtime context, never a graph-state field or model argument.
+            child_config = dict(config)
+            child_config["configurable"] = {**config.get("configurable", {}), "dataset_store": DatasetStore()}
             output = execution.invoke({"plan": state["plan"],
-                                       "report_parameters": state["report_parameters"]}, config=config)
+                                       "report_parameters": state["report_parameters"]}, config=child_config)
             results = validate_task_results(output["task_results"])
             planned = {task["task_id"]: task for task in state["plan"]["tasks"]}
             # Validate identities against this plan, not only the result-map keys.

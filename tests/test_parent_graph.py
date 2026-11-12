@@ -121,3 +121,19 @@ def test_reused_parent_graph_does_not_keep_previous_request():
         second = graph.invoke({"user_query": "第二问"})
     assert set(first["task_results"]) == {"old"}
     assert set(second["task_results"]) == {"new"}
+
+
+def test_dataset_store_is_per_request_not_state_or_global():
+    from src.datasets import DatasetStore
+    md = market()
+    planning = Mock(); planning.invoke.return_value = plan()
+    composing = Mock(); composing.invoke.return_value = {"answer": "100元"}
+    graph = create_parent_graph(market_data_graph=md, report_graph=Mock())
+    with patch("src.stages.planner._create_chain", return_value=planning), patch(
+            "src.stages.composer._create_chain", return_value=composing):
+        a = graph.invoke({"user_query": "第一次"})
+        b = graph.invoke({"user_query": "第二次"})
+    stores = [call.kwargs["config"]["configurable"]["dataset_store"] for call in md.invoke.call_args_list]
+    assert all(isinstance(store, DatasetStore) for store in stores)
+    assert stores[0] is not stores[1]
+    assert "dataset_store" not in a and "dataset_store" not in b

@@ -688,3 +688,16 @@ output_retries>0 时模型不再绑定工具，修正提示要求只修复已有
 
 mock 测试覆盖清单传递、修正时不绑定工具及阻断重复查询；
 本轮没有真实 API 延迟基准，不能将日志中的可避免时间视为固定加速保证。
+
+
+## 20. Analytics 分步建设开始（2026-11-12）
+
+已确认定量分析工具及与 Market Data / Strategy 的按需依赖关系，见 [Analytics 实施规格](analytics-agent.md)。
+步骤1数据契约与请求内存储已实现，步骤2结构化采集待实施。父图调度及报告内部保持不变。
+
+
+## 21. 历史日线数据采集与引用交接（2026-11-12）
+
+Analytics 步骤2的股票/指数历史价格已接入 Market Data：请求内 DatasetStore、真实注册引用、
+JSON-safe 元数据及 UI 展示。原报告工具列表与节点不改，Analytics 仍未接入。
+详细接口、单位、范围与生命周期限制见 [Analytics 实施规格](analytics-agent.md)。

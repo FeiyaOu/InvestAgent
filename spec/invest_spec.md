@@ -231,3 +231,9 @@ pytest tests/test_agent.py -v                 # C8–C9 路由测试
 pytest tests/ -m integration                  # 集成测试（需 DASHSCOPE_API_KEY）
 python linters/check_agent_structure.py       # 结构 lint 检查
 ```
+
+
+## Analytics 建设进展（2026-11-12）
+
+已确认的职责、V1/V2 工具及局部 State 见 [Analytics 实施规格](analytics-agent.md)。
+已完成数据契约、请求内 DatasetStore 和 Market Data 历史日线采集引用；计算工具待建设，Analytics 在 Supervisor 中仍为 unsupported。

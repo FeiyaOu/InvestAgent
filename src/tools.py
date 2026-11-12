@@ -13,6 +13,9 @@ AKShare 市场数据工具
 from __future__ import annotations
 
 import os
+from typing import Literal
+
+from langchain_core.runnables import RunnableConfig
 
 from langchain_core.tools import tool
 
@@ -550,3 +553,85 @@ INVEST_TOOLS = [
     search_stock_news,
     get_stock_performance,   # 新增：个股表现查询
 ]
+
+
+# Structured acquisition is separate from INVEST_TOOLS to preserve report inputs.
+@tool
+def get_price_history(query: str, start_date: str, end_date: str, config: RunnableConfig,
+                      asset_type: Literal["stock", "index"] = "stock",
+                      adjustment: Literal["none", "qfq", "hfq"] = "qfq") -> str:
+    """Fetch dated daily A-share prices or benchmark index history into a request dataset.
+
+    Use for historical/quantitative requests, not just the latest price.
+    Dates must be YYYY-MM-DD. Stock query accepts a name or six-digit code;
+    index query requires a six-digit index code and adjustment='none'.
+    Returns metadata/reference and endpoint observations, never the full table.
+    DatasetStore is injected by application config, not supplied by the model.
+    """
+    import json
+    from datetime import date, datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+    from src.datasets import DatasetStore, PriceDataset
+
+    def unavailable(kind, message):
+        return json.dumps({"status": "unavailable", "error": {"type": kind, "message": message}}, ensure_ascii=False)
+
+    store = (config.get("configurable") or {}).get("dataset_store")
+    if not isinstance(store, DatasetStore):
+        return unavailable("missing_store", "请求内数据存储未配置，不能返回有效数据集引用。")
+    try:
+        start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        if start > end or (end - start).days > 3660 or end > datetime.now(ZoneInfo("Asia/Shanghai")).date():
+            return unavailable("invalid_range", "日期须为有效历史区间，单次最长3660天。")
+        code = _resolve_stock_code(query) if asset_type == "stock" else query.strip()
+        if not code or len(code) != 6 or not code.isdigit():
+            return unavailable("invalid_symbol", "仅支持六位 A 股或指数代码，请明确查询对象。")
+        if asset_type == "index" and adjustment != "none":
+            return unavailable("invalid_adjustment", "指数历史行情请使用 adjustment=none。")
+        if asset_type == "stock" and not code.startswith(("0", "3", "6")):
+            return unavailable("unsupported_market", "首版仅支持沪深 A 股。")
+        real = _should_use_real_data()
+        if real:
+            import akshare as ak
+            if asset_type == "stock":
+                df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
+                    end_date=end.strftime("%Y%m%d"), adjust="" if adjustment == "none" else adjustment)
+            else:
+                df = ak.index_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
+                                       end_date=end.strftime("%Y%m%d"))
+            provider = "akshare/eastmoney"
+        else:
+            days = pd.bdate_range(start, end)
+            df = pd.DataFrame({"日期": days, "收盘": [100. + i * .1 for i in range(len(days))]})
+            provider = "synthetic_demo"
+        if df is None or df.empty:
+            return unavailable("no_data", "指定区间无可用交易数据。")
+        rows = []
+        has_volume = asset_type == "stock" and "成交量" in df.columns
+        for _, raw in df.iterrows():
+            observed = pd.to_datetime(raw["日期"], errors="raise").date()
+            if not start <= observed <= end:
+                raise ValueError("provider date outside requested range")
+            row = {"date": observed, "close": float(raw["收盘"])}
+            for column, key in (("开盘", "open"), ("最高", "high"), ("最低", "low")):
+                if column in df.columns:
+                    row[key] = None if pd.isna(raw[column]) else float(raw[column])
+            if has_volume:
+                # stock_zh_a_hist documented volume is lots (手), normalize to shares.
+                row["volume"] = None if pd.isna(raw["成交量"]) else float(raw["成交量"]) * 100
+            rows.append(row)
+        dataset = PriceDataset(kind="price_history", symbol=code,
+            market=("SSE" if code.startswith("6") else "SZSE") if asset_type == "stock" else "CN_INDEX",
+            asset_type=asset_type, currency="CNY", frequency="daily", adjustment=adjustment,
+            price_unit="CNY/share" if asset_type == "stock" else "points",
+            volume_unit="shares" if has_volume else "not_available", provider=provider,
+            source_url="https://quote.eastmoney.com/" if real else None,
+            retrieved_at=datetime.now(timezone.utc), data_mode="real" if real else "mock", rows=rows)
+        ref = store.put(dataset)
+        return json.dumps({"status": "available", "dataset_ref": ref.model_dump(mode="json"),
+            "first_close": rows[0]["close"], "last_close": rows[-1]["close"],
+            "limitations": ["模拟工作日序列，不反映交易所节假日或真实行情"] if not real else []}, ensure_ascii=False)
+    except Exception:
+        return unavailable("history_unavailable", "历史行情获取或数据验证失败；未注册数据集，请稍后重试。")

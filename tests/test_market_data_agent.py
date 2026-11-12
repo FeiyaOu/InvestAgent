@@ -168,3 +168,22 @@ def test_output_repair_does_not_bind_tools_or_execute_new_calls():
     assert result["error"]["type"] == "invalid_output"
     assert result["tool_calls_used"] == 1
     assert llm.bind_tools.call_count == 2  # Initial selection + synthesis, not repair.
+
+
+def test_history_tool_reference_is_collected_from_store_not_model(monkeypatch):
+    import json
+    from src.datasets import DatasetStore
+    monkeypatch.setenv("USE_REAL_DATA", "false")
+    llm = Mock(); llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
+        "name": "get_price_history", "args": {"query": "600519", "start_date": "2025-01-02",
+            "end_date": "2025-01-03"}, "id": "history1"}]),
+        AIMessage(content=json.dumps({"answer": "已获取模拟历史数据", "evidence_ids": ["history1"], "missing_information": []}))]
+    store = DatasetStore()
+    with patch("src.stages.market_data.create_llm", return_value=llm):
+        graph = create_market_data_agent()
+        result = graph.invoke({"task": "获取去年历史价格"}, config={"configurable": {"dataset_store": store}})
+    assert result["status"] == "partial"
+    ref = result["result"]["dataset_refs"][0]
+    assert store.get(ref["dataset_id"]).rows
+    assert "rows" not in ref
