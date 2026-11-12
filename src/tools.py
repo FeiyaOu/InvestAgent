@@ -635,3 +635,86 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
             "limitations": ["模拟工作日序列，不反映交易所节假日或真实行情"] if not real else []}, ensure_ascii=False)
     except Exception:
         return unavailable("history_unavailable", "历史行情获取或数据验证失败；未注册数据集，请稍后重试。")
+
+
+@tool
+def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str | None = None) -> str:
+    """Fetch an A-share valuation snapshot on the latest available date <= as_of_date.
+
+    Date is YYYY-MM-DD, defaults to today's Shanghai date. Uses PE TTM and PB MRQ,
+    never substitutes static PE. Dividend yield is explicitly unavailable in this source.
+    Registers a dated ValuationDataset and returns its canonical reference and metrics.
+    Historical source observations are not guaranteed point-in-time financial records.
+    """
+    import json
+    import math
+    from datetime import date, datetime, timezone
+    from zoneinfo import ZoneInfo
+    import pandas as pd
+    from src.datasets import DatasetStore, ValuationDataset
+
+    def unavailable(kind, message):
+        return json.dumps({"status": "unavailable", "error": {"type": kind, "message": message}}, ensure_ascii=False)
+
+    store = (config.get("configurable") or {}).get("dataset_store")
+    if not isinstance(store, DatasetStore):
+        return unavailable("missing_store", "请求内数据存储未配置。")
+    try:
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        requested = date.fromisoformat(as_of_date) if as_of_date is not None else today
+        if requested > today:
+            return unavailable("invalid_date", "不支持未来日期估值。")
+        code = _resolve_stock_code(query)
+        if not code or len(code) != 6 or not code.startswith(("0", "3", "6")):
+            return unavailable("invalid_symbol", "首版仅支持沪深 A 股名称或六位代码。")
+        real = _should_use_real_data()
+        if real:
+            import akshare as ak
+            frame = ak.stock_value_em(symbol=code)
+            if frame is None or frame.empty:
+                return unavailable("no_data", "无可用估值数据。")
+            frame = frame.copy()
+            frame["数据日期"] = pd.to_datetime(frame["数据日期"], errors="raise").dt.date
+            eligible = frame[frame["数据日期"] <= requested]
+            if eligible.empty:
+                return unavailable("no_data", "指定日期及之前无估值观察值。")
+            actual = eligible["数据日期"].max()
+            latest = eligible[eligible["数据日期"] == actual]
+            if len(latest) != 1:
+                return unavailable("ambiguous_data", "同一观察日期有重复估值记录。")
+            raw = latest.iloc[0]
+        else:
+            actual = requested
+            raw = {"PE(TTM)": 20., "市净率": 2.}
+        values = {}
+        for name, column, basis in (("pe_ttm", "PE(TTM)", "PE_TTM"), ("pb", "市净率", "PB_MRQ")):
+            source = raw.get(column)
+            if source is None or pd.isna(source) or str(source).strip() in {"", "-", "--"}:
+                value, reason = None, f"供应商未提供{column}，不以其他口径代替"
+            else:
+                value, reason = float(source), None
+                if not math.isfinite(value):
+                    raise ValueError("nonfinite valuation")
+            values[name] = {"value": value, "unit": "multiple", "basis": basis, "missing_reason": reason}
+        values["dividend_yield"] = {"value": None, "unit": "percent", "basis": None,
+            "missing_reason": "该来源不提供有明确口径的个股股息率"}
+        if all(values[name]["value"] is None for name in ("pe_ttm", "pb")):
+            return unavailable("no_metrics", "无可用 PE TTM 或 PB MRQ，不注册空快照。")
+        dataset = ValuationDataset(kind="valuation_snapshot", symbol=code,
+            market="SSE" if code.startswith("6") else "SZSE", currency="CNY",
+            provider="akshare/eastmoney/stock_value_em" if real else "synthetic_demo",
+            source_url=f"https://data.eastmoney.com/gzfx/detail/{code}.html" if real else None,
+            retrieved_at=datetime.now(timezone.utc), data_mode="real" if real else "mock",
+            as_of_date=actual, available_at=None, report_period=None, metrics=values)
+        ref = store.put(dataset)
+        limitations = ["股息率缺失，未推断公告日期/报告期，不能用于无前视偏差历史回测。",
+                       "非正PE/PB不适用于相对估值排名；不同指标口径不可混用。"]
+        if actual != requested:
+            limitations.append(f"请求日期{requested}，实际观察日期{actual}；未假定为当天估值。")
+        if not real:
+            limitations.append("模拟数据，不代表真实估值。")
+        return json.dumps({"status": "available", "dataset_ref": ref.model_dump(mode="json"),
+            "requested_date": requested.isoformat(), "metrics": dataset.model_dump(mode="json")["metrics"],
+            "limitations": limitations}, ensure_ascii=False, allow_nan=False)
+    except Exception:
+        return unavailable("valuation_unavailable", "估值获取或验证失败，未注册数据集，请稍后重试。")

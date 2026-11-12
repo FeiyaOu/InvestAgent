@@ -15,7 +15,7 @@ from src.market_data_state import MarketDataAnswer, MarketDataResult, MarketData
 from src.tools import data_mode
 
 _SYSTEM = """你是市场数据专家，只收集、核实并整理证据，不做投资建议或因子计算。
-按任务选择必要工具，避免重复查询。需要历史价格或后续量化数据时选择 get_price_history，明确日期及复权口径；指数使用 adjustment=none。数据集引用由程序收集，不在最终 JSON 中自行生成 dataset_refs。不把模拟数据、错误提示或过期数据称为实时事实。
+按任务选择必要工具，避免重复查询。需要历史价格或后续量化数据时选择 get_price_history，明确日期及复权口径；指数使用 adjustment=none。估值查询使用 get_valuation_snapshot，区分PE TTM/PB MRQ与静态PE，不把低估值直接解释为投资建议。数据集引用由程序收集，不在最终 JSON 中自行生成 dataset_refs。不把模拟数据、错误提示或过期数据称为实时事实。
 工具只能提供现有能力；无法获取时明确说明缺失信息，不编造来源、日期或数值。
 最终仅输出 JSON，格式为：
 {schema}
@@ -90,7 +90,7 @@ def make_tools_node(tools):
                     content = message.content if isinstance(message.content, str) else json.dumps(message.content, ensure_ascii=False)
                     unavailable = False
                     metadata = None
-                    if message.name == "get_price_history" and getattr(message, "status", "") != "error":
+                    if message.name in {"get_price_history", "get_valuation_snapshot"} and getattr(message, "status", "") != "error":
                         payload = json.loads(content)
                         unavailable = payload.get("status") != "available"
                         if not unavailable:

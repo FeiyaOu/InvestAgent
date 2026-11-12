@@ -187,3 +187,21 @@ def test_history_tool_reference_is_collected_from_store_not_model(monkeypatch):
     ref = result["result"]["dataset_refs"][0]
     assert store.get(ref["dataset_id"]).rows
     assert "rows" not in ref
+
+
+def test_valuation_snapshot_reference_is_collected_by_market_agent(monkeypatch):
+    from src.datasets import DatasetStore
+    monkeypatch.setenv("USE_REAL_DATA", "false")
+    llm = Mock(); llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
+        "name": "get_valuation_snapshot", "args": {"query": "茅台", "as_of_date": "2025-01-03"}, "id": "v1"}]),
+        answer(evidence_ids=["v1"], missing_information=["股息率缺失"]) ]
+    store = DatasetStore()
+    with patch("src.stages.market_data.create_llm", return_value=llm):
+        result = create_market_data_agent().invoke({"task": "获取茅台估值"},
+            config={"configurable": {"dataset_store": store}})
+    assert result["status"] == "partial"
+    ref = result["result"]["dataset_refs"][0]
+    assert ref["kind"] == "valuation_snapshot"
+    assert store.get(ref["dataset_id"]).metrics["pe_ttm"].basis == "PE_TTM"
+    assert result["result"]["evidence"][0]["as_of_date"] == "2025-01-03"

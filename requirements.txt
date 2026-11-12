@@ -21,6 +21,7 @@ akshare>=1.12
 # akshare 内部 str.replace(r"\u3000", regex=True) 会被 RE2 判为非法转义，
 # 导致 stock_news_em 等接口在真实数据模式下直接抛 ArrowInvalid
 pandas>=2.0,<3.0
+numpy>=1.26
 
 # Streamlit — UI
 streamlit>=1.49

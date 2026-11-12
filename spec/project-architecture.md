@@ -81,4 +81,4 @@ C8 为四类任务与有效计划，C9 为非空用户响应；结构 lint 检�
 ## Analytics 建设进展（2026-11-12）
 
 已确认的职责、V1/V2 工具及局部 State 见 [Analytics 实施规格](analytics-agent.md)。
-已完成数据契约、请求内 DatasetStore 和 Market Data 历史日线采集引用；计算工具待建设，Analytics 在 Supervisor 中仍为 unsupported。
+已完成数据契约、请求内 DatasetStore 和 Market Data 历史日线采集引用；V1表现/基准/因子/估值四个计算工具及价格/估值采集已实现首版；尚未接 Analytics Agent，Supervisor 中仍为 unsupported。

@@ -1,6 +1,6 @@
 # Analytics Agent 实施规格
 
-日期：2026-11-12。方案已确认，分步建设。当前完成步骤1及步骤2的日线历史价格采集，尚无 Analytics Agent 或计算工具；财务/估值采集待补。
+日期：2026-11-12。方案已确认，分步建设。当前完成步骤1及步骤2的日线历史价格采集，V1四个计算工具及价格/估值采集均已实现首版；尚无 Analytics Agent，完整财报采集仍未实现。
 
 ## 职责与依赖
 
@@ -13,8 +13,8 @@ Strategy 还应接收相关原始定性证据，不能只依赖 Analytics 摘要
 ## 分步实施
 
 1. **数据契约与请求内存储：已完成**，见下节。
-2. **日线采集已完成**：共享工具层新增结构化采集工具，Market Data 返回数据集引用；原报告工具保持兼容。财务/估值采集后续补齐。
-3. TDD 实现 V1 计算工具，先表现与基准，再因子及估值。
+2. **日线采集已完成**：共享工具层新增结构化采集工具，Market Data 返回数据集引用；原报告工具保持兼容。估值快照已补齐，完整财报采集不在首版范围。
+3. **V1 工具已独立实现**：表现、基准、小目录因子及估值比较；尚未接 Analytics 子图。
 4. 独立 Analytics 子图，采用局部状态、工具循环、预算和输出验证，修正阶段不重新执行工具。
 5. 独立测试数值、图表产物来源、缺失数据与失败行为。
 6. Supervisor 接入 Analytics 及 dataset / analysis 引用交接，暂不改报告内部。
@@ -114,3 +114,116 @@ PyPortfolioOpt、HRP、Black-Litterman 留给未来 Strategy / Risk，不放入 
 测试覆盖股票/指数规范化、无数据/网络与输入错误、模拟状态、无效供应商数据、
 隐藏运行配置、ToolNode 真结构执行、引用收集和父图跨请求隔离；全部使用 mock。
 未执行真实行情 API。下一步开始 V1 表现/基准计算工具，估值计算仍需财务与估值采集支持。
+
+
+## 步骤3：表现与基准工具（2026-11-12 已实现，未接 Agent）
+
+`src/analytics_tools.py` 提供两个 @tool，不调用 LLM 或数据 API。
+输入 dataset_id，基准比较另需 benchmark_dataset_id，periods_per_year 默认252，可选1–366。
+运行时在 RunnableConfig.configurable 显式提供同请求 dataset_store 和 analysis_store。
+当前父图只注入 dataset_store；analysis_store 尚未接入运行入口，需待 Analytics 建设时统一注入。
+
+### 表现工具
+
+analyze_price_performance：至少2个价格，计算 close_last / close_first - 1、
+价格 / 历史累计最高价格 - 1 的最小值（最大回撤为非正数）、
+简单收益率的样本标准差（ddof=1）乘 sqrt(periods_per_year)。
+少于2个收益观察值时波动率为空，说明限制，不伪造零波动。
+图表产物为归一化累计收益和回撤序列。
+
+### 基准工具
+
+compare_with_benchmark：共同日期 inner join，不 forward fill，至少3个共同价格。
+同一共同区间内计算简单收益，beta=cov(asset,benchmark)/var(benchmark)，
+相关性、样本收益差标准差乘 sqrt(periods_per_year) 为 tracking_error。
+超额区间收益定义为两个累计收益的差，不是相对财富比率或 alpha。
+币种不一致、总回报与价格收益基准不一致时拒绝计算；不自动汇率转换。
+零或近零方差下 beta / 相关性按可定义性返回 null 并说明；零方差阈值1e-18。
+对齐丢弃任一数据集日期时，收益间隔可能不再连续，不年化 tracking_error，返回 null。
+共同样本上的 beta/相关性仍保留并注明对齐限制。
+图表产物为标的与基准共同区间累计收益序列。
+
+### 产物与状态
+
+`src/analytics_artifacts.py` 定义 AnalysisArtifact / SeriesPoint / AnalysisStore，
+记录 canonical dataset_refs、创建时间、区间、收益样本数、metrics、metric_units、assumptions、limitations。
+收益、波动率和回撤用 fraction（0.1代表10%），beta/相关性无量纲。
+模拟标记、未复权风险、连续交易日年化假设及非总回报限制随产物保存。
+
+工具返回 available + analysis_ref 或 unavailable + 结构化错误。
+analysis_ref 包含指标与 chart_refs，不包含完整序列；序列只在请求内 AnalysisStore，
+chart_refs 由 analysis_id / series_key 组成，可读取 artifact.series[series_key]。
+引用不能跨新建存储实例解析，存储读写复制、支持 clear，未持久化或新增图状态大数组。
+available 只表示计算完成，不代表样本充分或结论可靠，必须保留 limitations。
+
+```python
+from src.datasets import DatasetStore
+from src.analytics_artifacts import AnalysisStore
+from src.analytics_tools import analyze_price_performance
+
+# prices 是已有、经验证的 PriceDataset。
+datasets, analyses = DatasetStore(), AnalysisStore()
+# ref = datasets.put(prices)
+# result = analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config={
+#     "configurable": {"dataset_store": datasets, "analysis_store": analyses}})
+```
+
+数值测试用可手算序列覆盖收益/回撤/波动率、基准同收益、零方差、缺失日期、
+币种/收益口径不兼容、模拟数据、引用失效及对象复制；不运行真实 API。
+下一步按原计划实现小目录因子计算；估值工具需先补齐结构化财务/估值来源。
+
+
+## V1 价格因子、估值采集与比较（2026-11-12 已实现）
+
+### compute_factors
+
+独立 @tool，输入 dataset_id、window（2–252个观察值）、factors 和 periods_per_year（默认252）。
+默认 momentum / sma_gap / realized_volatility，可显式选择 volume_ratio；拒绝空目录、未知或重复因子。
+
+| 因子 | 定义 |
+|---|---|
+| momentum | P[t] / P[t-window] - 1，不跳过最近月份 |
+| sma_gap | 当前价格 / 含当前观察值的 window 均线 - 1 |
+| realized_volatility | window 个简单收益的样本标准差（ddof=1）乘年化平方根 |
+| volume_ratio | 当前成交量 / 含当前观察值的 window 平均成交量 |
+
+只用向后滚动窗口；不将 warm-up 缺失填零，不补缺失成交量。
+样本不足、零成交量分母等使最新指标为 null，附原因；图表仅存有效点，不含 NaN。
+series 保留在 AnalysisStore，工具返回 analysis_ref，不代表已证明预测能力或实现因子回测。
+
+### get_valuation_snapshot
+
+新增 src/tools.py 工具，加入 Market Data 默认集合，原报告 INVEST_TOOLS 不变。
+query 支持沪深 A 股代码/既有名称；as_of_date 默认为上海当天，不支持未来日期。
+实盘通过 AKShare stock_value_em 取观察日期不晚于请求日期的最新唯一记录，
+不将取数时间冒充估值观察日期；重复日期或无数据明确 unavailable。
+
+按照 [AKShare 官方实现](https://github.com/akfamily/akshare/blob/main/akshare/stock/valuation/stock_value_em.py)
+映射 PE(TTM) → pe_ttm / PE_TTM，市净率 → pb / PB_MRQ，不使用 PE(静) 补缺。
+该来源不提供明确股息率，dividend_yield 返回 null 和 missing_reason，不用零代替。
+未提供报告期/公告时间，不推断 available_at，不保证历史 point-in-time 可用性。
+请求日期与实际观察日期不同会提示；实盘错误不改用模拟，模拟模式明确 synthetic_demo。
+保留非正原值供比较工具判断，不将负PE视为低估。
+工具注册 ValuationDataset，返回 canonical dataset_ref、metrics、requested_date、limitations。
+Market Data 工具节点自动收集引用和实际日期，最终输出验证规则不变。
+
+### compare_valuations
+
+独立 @tool，输入2–20个不同公司的 valuation_snapshot 引用；相同币种与相同观察日期为前提。
+默认比较 pe_ttm / pb，可显式选择已有指标目录。重复引用、公司、日期/币种不匹配及非估值数据拒绝。
+
+AnalysisArtifact 新增 table（默认空），比较表保留逐公司原值、可用值、单位、定义与缺失/不适用原因。
+非正 PE/PB 不参与汇总，raw_value 保留；未提供的股息率等仍为 null，不填零。
+每项指标只有所有公司数值有效、已知定义一致时才计算 median 和 max-min spread，否则二者为 null。
+已知定义目录：PE_TTM；PB_MRQ/PB_LYR；DIVIDEND_YIELD_TTM；REVENUE_YOY；EARNINGS_YOY；
+ROE_TTM/ROE_FY；EPS_TTM/EPS_FY。即使任意两个未知标签相同也不视为口径可比。
+财务类增长/ROE/EPS 还须相同报告期并提供可用日期，不能据空日期假设可比。
+工具不生成买卖评级、低估排名或未来投资结论；行业、增长与质量仍需其他证据。
+sample_size 在表现工具是收益间隔数，在估值比较是公司数，后者通过 assumptions.sample_size_unit 明示。
+
+### 本轮范围与验证
+
+Analytics Agent、Supervisor analytics dispatch、AnalysisStore 的父图注入及 Plotly 看板尚未接入。
+报告内部未改，不因新增工具而声称估值研究已端到端上线。
+测试使用 mock 供应商与可手算序列，覆盖因子值/无前视/缺失量、估值口径、日期、缺失值、
+非正PE、未知定义、静态PE不可替代、来源失败及 Market Data 引用收集。未调用真实数据 API。

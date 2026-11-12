@@ -701,3 +701,16 @@ mock 测试覆盖清单传递、修正时不绑定工具及阻断重复查询；
 Analytics 步骤2的股票/指数历史价格已接入 Market Data：请求内 DatasetStore、真实注册引用、
 JSON-safe 元数据及 UI 展示。原报告工具列表与节点不改，Analytics 仍未接入。
 详细接口、单位、范围与生命周期限制见 [Analytics 实施规格](analytics-agent.md)。
+
+
+## 22. V1 表现/基准计算工具（2026-11-12）
+
+analyze_price_performance 与 compare_with_benchmark 已独立实现，指标与图表序列保存为请求内分析产物。
+详见 [Analytics 实施规格](analytics-agent.md)。尚未接入 Agent / Supervisor / UI，Analytics 仍 unsupported。
+
+
+## 23. V1 小目录因子与估值链路（2026-11-12）
+
+新增 compute_factors、get_valuation_snapshot、compare_valuations；估值指标增加 basis 元数据，
+AnalysisArtifact 增加比较表。Market Data 可收集真实注册估值引用；Analytics Agent 仍待建设，
+报告内部保持不变。公式、来源、可比性与限制见 [Analytics 实施规格](analytics-agent.md)。

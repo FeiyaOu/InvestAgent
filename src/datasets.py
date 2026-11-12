@@ -70,6 +70,7 @@ class PriceDataset(Provenance):
 
 
 class ValuationMetric(DatasetModel):
+    basis: str | None = None  # e.g. PE_TTM / PB_MRQ; unknown remains unknown.
     value: float | None
     unit: Literal["multiple", "percent", "currency_per_share"]
     missing_reason: str | None = None
