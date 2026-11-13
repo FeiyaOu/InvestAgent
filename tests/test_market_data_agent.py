@@ -1,11 +1,22 @@
 """Independent subgraph tests: no real LLM or market API."""
 import json
+import pytest
 from unittest.mock import Mock, patch
 
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from src.market_data_agent import create_market_data_agent
+
+
+@pytest.fixture(autouse=True)
+def explicit_evidence_mode(monkeypatch):
+    """Status semantics must not inherit CI's USE_REAL_DATA=false.
+
+    All tools/LLMs in this module are fake or mocked; this enables the complete
+    evidence path without network calls. Mock-mode cases override it explicitly.
+    """
+    monkeypatch.setenv("USE_REAL_DATA", "true")
 
 
 @tool

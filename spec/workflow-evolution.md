@@ -1065,3 +1065,12 @@ ready计划若漏report或违背明确拒绝，触发report_intent字段诊断�
 新增六张默认示例卡片和边界测试区，点击只填入输入框，组合示例使用上海点击当日日期。
 已知Strategy问题仍暂缓，其示例仅标实验性，不作为默认推荐。
 详见[报告交付与UI分层](report-delivery.md)，不改变后端编排或报告内部。
+
+## CI中Market Data单元测试的数据模式隔离（2026-11-13）
+
+已复现部署质量门禁的4项失败：CI设置USE_REAL_DATA=false，而test_market_data_agent的假工具结果
+未设置独立模式，证据继承mock标签，按生产规则返回partial，与测试期待completed冲突。
+在该测试模块增加autouse monkeypatch fixture，默认显式true以验证完整证据状态；
+所有工具与模型仍为假实现/mock，无真实网络。模拟模式/结构化模拟采集用例显式覆盖false。
+不修改mock证据降级语义，不把CI全局模式改成真实采集，也不降低断言。
+验证：USE_REAL_DATA=false下全量389 passed、2 integration未运行；true下该模块19 passed；结构lint和diff检查通过。
