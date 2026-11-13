@@ -137,3 +137,17 @@ def test_dataset_store_is_per_request_not_state_or_global():
     assert all(isinstance(store, DatasetStore) for store in stores)
     assert stores[0] is not stores[1]
     assert "dataset_store" not in a and "dataset_store" not in b
+
+
+def test_report_intent_repair_dispatches_report_without_executing_rejected_data_plan(valid_report):
+    import json
+    md, report=market(),Mock()
+    report.invoke.return_value={'current_phase':'completed','error':None,'final_report':json.dumps(valid_report)}
+    planning=Mock();planning.invoke.side_effect=[plan(task()),plan(task('r','report'))]
+    with patch('src.stages.planner._create_chain',return_value=planning):
+        result=create_parent_graph(market_data_graph=md,report_graph=report).invoke(
+            {'user_query':'请生成新能源行业未来一年的投研报告，重点关注光伏。'})
+    assert result['planning_attempts']==2
+    assert result['task_results']['r']['status']=='completed'
+    md.invoke.assert_not_called()
+    report.invoke.assert_called_once()

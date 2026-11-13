@@ -266,3 +266,36 @@ def test_exhausted_planning_attempts_keep_both_diagnostics():
     assert result['planning_status'] == 'failed'
     assert [e['attempt'] for e in events if e['status'] == 'validation_failed'] == [1, 2]
     assert events[-1]['status'] == 'failed'
+
+
+def test_explicit_report_request_repairs_plan_missing_report_category():
+    query='请生成新能源行业未来一年的投研报告，重点关注光伏。'
+    wrong=plan([task('d'),task('a','analytics',['d']),task('s','investment_strategy',['a'])])
+    result,chain=invoke([wrong,plan([task('r','report')])],{'user_query':query})
+    assert result['planning_status']=='ready' and result['planning_attempts']==2
+    assert result['plan']['tasks'][0]['category']=='report'
+    assert 'report' in chain.invoke.call_args.args[0]['correction']
+
+
+def test_report_intent_mismatch_never_executes_wrong_ready_plan():
+    result,_=invoke([plan(),plan()],{'user_query':'请生成光伏行业投研报告'})
+    assert result['planning_status']=='failed' and result['plan'] is None
+    assert 'report_intent' in result['planning_error']['message']
+
+
+def test_explicit_no_report_rejects_report_but_analysis_is_allowed():
+    result,_=invoke([plan([task('r','report')]),plan()],{'user_query':'分析光伏风险，不要生成完整报告。'})
+    assert result['planning_status']=='ready' and result['planning_attempts']==2
+
+
+@pytest.mark.parametrize('query,expected',[
+    ('请生成新能源行业未来一年的投研报告，重点关注光伏。','requested'),
+    ('分析投资机会，不要生成完整报告。','forbidden'),
+    ('不用查询价格，请生成光伏行业投研报告。','requested'),
+    ('请解释如何生成投研报告。','unspecified'),
+    ('比较两家公司估值并分析机会。','unspecified'),
+    ('暂不生成报告，先查价格。','forbidden'),
+])
+def test_explicit_report_intent_handles_negation_and_explanation(query,expected):
+    from src.report_intent import explicit_report_intent
+    assert explicit_report_intent(query)==expected
