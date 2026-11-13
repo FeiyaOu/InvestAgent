@@ -65,7 +65,7 @@ def _public_records(records):
                         "limitations", "missing_information", "missing_data_requests", "dataset_refs", "evidence"):
                 item[key] = strategy[key]
         elif record.get("category") == "report":
-            item["notice"] = "请到「报告阅读」查看报告和下载；未完成任务请查看节点结果。"
+            item["notice"] = "请到「报告中心」查看报告和下载；未完成任务请查看节点结果。"
         # Only forward structured application errors, never raw provider exceptions.
         if record.get("error"):
             item["error"] = record["error"]

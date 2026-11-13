@@ -12,7 +12,7 @@
                                     └─ Report（感知→建模→推理→决策→报告→校验）
 ```
 
-Streamlit 展示逐任务结果与报告四个中间节点；生成后可在“报告阅读”查看并下载Markdown/HTML。
+Streamlit 展示逐任务结果与报告四个中间节点；生成后可在“报告中心”查看并下载Markdown/HTML。
 报告仅保留当前会话最近结果，不提供长期分享链接，详见[报告交付规格](spec/report-delivery.md)。
 没有 checkpoint 自动记忆；会话摘要仅存于当前浏览器会话，刷新或重启可能丢失。
 
@@ -142,3 +142,6 @@ print(state["task_results"])
 ```
 
 旧 processing_mode / 顶层 final_report / thread_id 记忆约定不再支持。
+
+界面提供“回答 / 数据与分析 / 报告中心”三个结果视图；开发者调试默认收起。
+六张示例卡片可填入问题后手动运行，边界与实验性问题在“更多测试场景”。

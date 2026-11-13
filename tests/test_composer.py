@@ -34,7 +34,7 @@ def test_report_body_and_intermediates_never_reach_composer_model():
         result = composer(state(r))
     assert "SECRET" not in str(chain.invoke.call_args)
     assert "SECRET" not in result["final_response"]
-    assert "报告阅读" in result["final_response"]
+    assert "报告中心" in result["final_response"]
 
 
 def test_model_failure_falls_back_to_available_results():

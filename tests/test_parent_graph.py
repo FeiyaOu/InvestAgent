@@ -94,7 +94,7 @@ def test_report_state_stays_in_task_payload_and_is_not_composed(valid_report):
         result = create_parent_graph(market_data_graph=market(), report_graph=report).invoke({
             "user_query": "生成新能源报告", "report_parameters": {"r": {"industry_focus": "光伏"}}})
     assert result["task_results"]["r"]["result"]["perception_data"] == {"detail": "kept"}
-    assert "报告阅读" in result["final_response"]
+    assert "报告中心" in result["final_response"]
     composing.assert_not_called()
 
 

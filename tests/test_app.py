@@ -64,8 +64,8 @@ def test_report_nodes_remain_visible_when_final_report_is_unreadable():
                "reasoning_plans": [], "selected_plan": {"investment_thesis": "决策依据"},
                "final_report": "SECRET_REPORT"}
     at = submit(fake({"r": task("r", "report", result=payload)}, final="报告内容不可读取，请查看节点结果"))
-    assert {h.value for h in at.tabs[3].subheader} >= {"perception_data", "world_model", "reasoning_plans", "selected_plan"}
-    assert len(at.tabs[3].json) == 4
+    assert {h.value for h in next(t for t in at.tabs if t.label=='报告生成过程').subheader} >= {"perception_data", "world_model", "reasoning_plans", "selected_plan"}
+    assert len(next(t for t in at.tabs if t.label=='报告生成过程').json) == 4
     assert "SECRET_REPORT" not in str([j.value for j in at.json])
 
 
@@ -251,3 +251,23 @@ def test_partial_report_is_draft_and_multiple_reports_have_distinct_downloads(va
     at=submit(fake({'r1':record,'r2':another},status='partial'))
     assert len(at.get('download_button'))==4
     assert any('草稿' in item.value for item in at.warning)
+
+
+def test_product_views_and_collapsed_developer_area_are_separated():
+    at=AppTest.from_file(_APP).run()
+    assert not at.exception
+    labels=[t.label for t in at.tabs]
+    assert {'回答','数据与分析','报告中心','报告生成过程','任务规划与调度','专家执行记录'} <= set(labels)
+    debug=next(e for e in at.expander if e.label=='开发者调试')
+    assert debug.proto.expanded is False
+
+
+def test_example_click_only_fills_input_and_report_center_offers_report_example():
+    with patch('src.agent.create_invest_agent') as factory:
+        at=AppTest.from_file(_APP).run()
+        next(b for b in at.button if b.label=='比较两家公司').click();at.run()
+        assert '收益、波动率和最大回撤' in at.text_area(key='query_input').value
+        factory.assert_not_called()
+        next(b for b in at.button if b.label=='试试生成报告').click();at.run()
+        assert '请生成新能源行业' in at.text_area(key='query_input').value
+        factory.assert_not_called()

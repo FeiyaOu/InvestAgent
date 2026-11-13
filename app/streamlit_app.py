@@ -16,6 +16,7 @@ import streamlit as st
 from app.analytics_dashboard import render_analytics_task
 from app.strategy_dashboard import render_strategy_task
 from app.report_viewer import render_report
+from app.example_queries import example_queries, BOUNDARY_EXAMPLES
 
 from src.tools import USE_REAL_DATA_ENV, parse_bool, data_mode, set_use_real_data
 
@@ -26,6 +27,20 @@ _LABELS = {"completed": "已完成", "partial": "部分完成", "failed": "失�
            "unsupported": "尚未接入", "blocked": "前置任务不可用"}
 
 st.set_page_config(page_title="InvestAgent — 投研工作台", page_icon="📊", layout="wide")
+st.markdown("""
+<style>
+.st-key-developer_debug [data-testid="stExpander"]:not([data-testid="stExpander"] [data-testid="stExpander"]) > details > summary {
+    background-color: #e0f2fe;
+    color: #075985;
+    border-radius: 8px;
+}
+.st-key-developer_debug [data-testid="stExpander"]:not([data-testid="stExpander"] [data-testid="stExpander"]) > details > summary:hover {
+    background-color: #bae6fd;
+    color: #075985;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Invalidate session objects from the old dual-path UI on hot reload.
 if st.session_state.get("ui_version") != 2:
     st.session_state.update(ui_version=2, conversation_history=[], last_result=None,
@@ -38,6 +53,11 @@ if "use_real_data" not in st.session_state:
     raw = dotenv_values(_ENV_PATH).get(USE_REAL_DATA_ENV, os.getenv(USE_REAL_DATA_ENV))
     st.session_state["use_real_data"] = parse_bool(raw, default=True)
 set_use_real_data(st.session_state["use_real_data"])
+
+
+def _fill_example(ident):
+    cards=example_queries() + BOUNDARY_EXAMPLES
+    st.session_state['query_input']=next(card['query'] for card in cards if card['id']==ident)
 
 
 def _render_nodes(payload):
@@ -91,7 +111,7 @@ def _debug_details(values):
     return details
 
 
-def _render_debug(state, debug):
+def _render_planning(state, debug):
     with st.expander("Planner · 完整计划与规划状态", expanded=True):
         st.write({key: state.get(key) for key in ("planning_status", "planning_attempts", "planning_error")})
         for event in debug:
@@ -107,6 +127,9 @@ def _render_debug(state, debug):
         for event in debug:
             if event["node"] == "task_started" or event["details"].get("tasks") is not None:
                 st.json(event)
+
+
+def _render_experts(state, debug):
     with st.expander("Strategy/Risk · 模型、工具与校验", expanded=True):
         found = False
         for event in debug:
@@ -115,6 +138,14 @@ def _render_debug(state, debug):
                 st.json(event)
         if not found:
             st.info("暂无 Strategy/Risk 执行事件。")
+    with st.expander("Analytics · 模型、工具与校验", expanded=True):
+        found = False
+        for event in debug:
+            if event.get("category") == "analytics":
+                found = True
+                st.json(event)
+        if not found:
+            st.info("暂无 Analytics 执行事件。")
     with st.expander("Market Data · 模型输出、工具批次与校验", expanded=True):
         st.caption("同一条 AI 消息里的多个 tool_calls 是同轮批次，可由 ToolNode 并行执行；跨消息批次为后续轮次。时间为收到节点事件的时间，不代表单个工具开始或结束时间。")
         found = False
@@ -125,6 +156,13 @@ def _render_debug(state, debug):
                 st.json(event, expanded=True)
         if not found:
             st.info("暂无 Market Data 内部事件；需运行新请求采集。")
+
+
+def _render_debug(state, debug):
+    with planning_slot.container():
+        _render_planning(state, debug)
+    with experts_slot.container():
+        _render_experts(state, debug)
 
 
 def _render_results(state, progress, snapshots=None, render_id="final"):
@@ -166,10 +204,6 @@ def _render_results(state, progress, snapshots=None, render_id="final"):
                     st.json(evidence)
                 for missing in payload.get("missing_information", []):
                     st.warning(missing)
-            elif record["category"] == "report" and payload.get("perception_data") is not None:
-                found = True
-                st.markdown(f"**报告 {ident} · 感知数据**")
-                st.json(payload["perception_data"])
         if not found:
             st.info("尚无数据证据。")
     with analysis_tab:
@@ -179,14 +213,8 @@ def _render_results(state, progress, snapshots=None, render_id="final"):
                 render_analytics_task(ident, record, snapshots, render_id=render_id)
             if record["category"] == "investment_strategy":
                 render_strategy_task(ident, record)
-            if record["category"] == "report":
-                payload = record.get("result") or {}
-                for field in _REPORT_FIELDS[1:]:
-                    if payload.get(field) is not None:
-                        st.markdown(f"**{ident} · {field}**")
-                        st.json(payload[field])
     with report_tab:
-        st.caption("四节点完整输出保持可见；成品报告请到「报告阅读」查看和下载。")
+        st.caption("四节点完整输出保持可见；成品报告请到「报告中心」查看和下载。")
         reports = dict(progress)
         for ident, record in records.items():
             if record["category"] == "report":
@@ -197,13 +225,14 @@ def _render_results(state, progress, snapshots=None, render_id="final"):
             st.markdown(f"**报告任务 {ident}**")
             _render_nodes(payload)
     with reader_tab:
-        found = False
-        for ident, record in records.items():
-            if record["category"] == "report":
-                found = True
-                render_report(ident, record, render_id=render_id)
-        if not found:
-            st.info("生成报告后，可在这里立即阅读并下载。本轮尚无报告任务。")
+        reports = {task['task_id']:{'question':task['question'], 'status':'running', 'result':None}
+                   for task in (state.get('plan') or {}).get('tasks',[]) if task['category']=='report'}
+        reports.update({ident:record for ident,record in records.items() if record['category']=='report'})
+        for ident, record in reports.items():
+            render_report(ident, record, render_id=render_id)
+        if not reports:
+            st.info("这里展示完整报告的生成状态、成品阅读与下载。普通行情和分析查询不会生成报告。")
+            st.button("试试生成报告", key=f"empty_report_{render_id}", on_click=_fill_example, args=("report",))
 
 
 with st.sidebar:
@@ -220,25 +249,41 @@ with st.sidebar:
     st.caption(f"已完成 {st.session_state['turn_count']} 轮")
 
 st.title("📊 InvestAgent · 投研工作台")
-st.caption("Planner → Supervisor → Market Data / Analytics / Strategy / Report → Composer")
-st.info("数据查询、Analytics 与报告已接入调度；分析看板已接入，Strategy/Risk V1 已接入。成品报告可在「报告阅读」查看并下载。")
+st.caption("查询市场、比较表现，或生成一份行业研究报告。")
+st.info("这是一个投研助手，可以帮你查询行情、比较股票、分析历史表现和风险，也能生成行业研究报告。展开示例选择问题，或在下方直接输入需求，再点击「运行研究任务」。回答和图表可在结果页查看，生成的报告可在「报告中心」阅读和下载。目前支持基于最近三轮对话上下文进行连续追问，更长的多轮对话能力待后续开发。点击侧边栏「新对话」可清空当前会话，开启新一轮交流。")
 if st.session_state["conversation_history"]:
     with st.expander("对话历史与上下文"):
         for turn in st.session_state["conversation_history"]:
             st.write(f"问题：{turn['query']}")
             st.write(f"摘要：{turn.get('response_preview', '')}")
-examples = [("行情查询", "茅台和五粮液最新价格是多少？"),
-            ("生成报告", "请生成新能源行业未来一年的投研报告，重点关注光伏。"),
-            ("混合任务", "查询茅台价格，比较与五粮液的估值，并分析未来一年投资机会。")]
-for col, (label, query) in zip(st.columns(3), examples):
-    if col.button(label, width="stretch"):
-        st.session_state["query_input"] = query
+st.caption("点击示例只填入问题，确认内容后再运行。")
+with st.expander("试试这些问题", expanded=False):
+    cards=example_queries()
+    for offset in (0,3):
+        for col,card in zip(st.columns(3),cards[offset:offset+3]):
+            with col.container(border=True):
+                st.button(card['title'],key='example_'+card['id'],on_click=_fill_example,args=(card['id'],),width='stretch')
+                st.caption(card['hint'])
+with st.expander("更多测试场景", expanded=False):
+    st.caption("边界场景用于检查数据缺失提示。机会与风险解释为实验性：已知输出校验问题尚未解决。")
+    for col,card in zip(st.columns(3),BOUNDARY_EXAMPLES):
+        col.button(card['title'],key='example_'+card['id'],on_click=_fill_example,args=(card['id'],),width='stretch')
+
 user_query = st.text_area("您想研究什么？", key="query_input", height=110)
 run_btn = st.button("🚀 运行研究任务", type="primary", width="stretch")
-st.caption("报告主题、行业和时间范围请直接写入问题；目前不提供未绑定任务的全局报告参数。")
-answer_tab, data_tab, analysis_tab, report_tab, reader_tab, trace_tab = st.tabs(
-    ["回答", "数据与证据", "分析与策略", "节点结果", "报告阅读", "执行记录"])
-# Each tab has its own replaceable container during execution.
+
+answer_tab, combined_tab, reader_tab = st.tabs(["回答", "数据与分析", "报告中心"])
+with combined_tab:
+    data_tab=st.container()
+    analysis_tab=st.container()
+with st.container(key="developer_debug"):
+    with st.expander("开发者调试", expanded=False):
+        st.caption("用于排查规划、专家执行和报告生成；不影响上方产品结果。")
+        planning_tab, experts_tab, report_tab = st.tabs(["任务规划与调度", "专家执行记录", "报告生成过程"])
+trace_tab=planning_tab
+planning_slot=planning_tab.empty()
+experts_slot=experts_tab.empty()
+# Independent placeholders keep streamed views replaceable and downloads unique.
 containers = [tab.empty() for tab in (answer_tab, data_tab, analysis_tab, report_tab, reader_tab)]
 
 if run_btn and user_query.strip():
@@ -263,8 +308,7 @@ if run_btn and user_query.strip():
             config["callbacks"] = [handler]
     except Exception:
         pass
-    with trace_tab:
-        debug_slot = st.empty()
+    with answer_tab:
         status = st.status("研究任务运行中…", expanded=True)
     try:
         graph = create_invest_agent()
@@ -275,14 +319,12 @@ if run_btn and user_query.strip():
                     debug.append({"step": len(debug) + 1, "node": "planner_attempt", "task_id": None,
                                   "category": None, "details": update,
                                   "received_at": datetime.now(timezone.utc).isoformat()})
-                    with debug_slot.container():
-                        _render_debug(current, debug)
+                    _render_debug(current, debug)
                 if update.get("event") == "strategy_diagnostic":
                     debug.append({"step": len(debug) + 1, "node": "strategy_diagnostic", "task_id": active_task,
                                   "category": "investment_strategy", "details": update,
                                   "received_at": datetime.now(timezone.utc).isoformat()})
-                    with debug_slot.container():
-                        _render_debug(current, debug)
+                    _render_debug(current, debug)
                 if update.get("event") == "analysis_artifacts":
                     snapshots.setdefault(update["task_id"], {}).update(update["artifacts"])
                 if update.get("event") == "task_started":
@@ -318,8 +360,7 @@ if run_btn and user_query.strip():
             render_seq += 1
             _render_results(current, progress, snapshots, render_id=f"stream_{render_seq}")
             answer_tab, data_tab, analysis_tab, report_tab, reader_tab = old_tabs
-            with debug_slot.container():
-                _render_debug(current, debug)
+            _render_debug(current, debug)
             with status:
                 _render_tasks(current)
         status.update(label="研究执行结束", state="error" if current.get("supervisor_status") == "failed"

@@ -128,6 +128,9 @@ aside{{background:#fff3cd;padding:16px;margin-top:20px}}@media(max-width:600px){
 
 def render_report(task_id, record, render_id='final'):
     st.subheader(f'报告 · {task_id}')
+    if record.get('status') in {'running','pending'}:
+        st.info('报告任务正在排队或生成中，完成后可在这里阅读和下载。')
+        return
     if record.get('status') not in {'completed','partial'}:
         st.info('报告尚未成功完成，暂无可下载的成品。请查看节点结果。')
         return
