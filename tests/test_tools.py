@@ -152,6 +152,7 @@ class TestGetSectorPerformance:
         assert len(result) > 0
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback 文本而非崩溃"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 
@@ -188,6 +189,7 @@ class TestGetIndexPerformance:
         assert len(result) > 0
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 
@@ -222,6 +224,7 @@ class TestGetMacroIndicators:
         assert len(result) > 0
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 
@@ -257,6 +260,7 @@ class TestSearchStockNews:
         assert result.count("\n") >= 1
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 

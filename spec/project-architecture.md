@@ -86,3 +86,15 @@ analytics-methodology运行时skill已创建并固定加载；Supervisor调度/�
 完整状态、无风险利率适用范围、样本不足及协方差产物边界见 [Analytics实施规格](analytics-agent.md)。
 
 Planner计划现在检查Analytics的直接数据依赖，并支持可选analytics_parameters；Composer展示分析指标、假设和限制，见Analytics规格步骤7a。
+
+
+### MiniRacer 原生崩溃隔离（2026-11-13）
+用户报告libmini_racer.dylib地址池初始化FATAL并终止Python进程；本机AKShare的新浪解码路径使用MiniRacer。
+尚未证明具体触发条件（并发、重载或运行库状态），不把加锁视为已验证根因修复。
+所有现有stock_zh_a_daily和stock_zh_index_daily调用统一经src.tools._call_sina执行：
+使用当前Python解释器启动独立进程（不使用multiprocessing fork），白名单函数名与JSON参数通过stdin传入，
+返回JSON记录后再按现有数据契约验证。原生进程异常退出转换为Python异常，由既有工具fallback处理；
+设置60秒超时，不向用户透传原始stderr。新解释器生命周期隔离V8，服务不因该子进程原生崩溃退出。
+不修改依赖版本、不禁用工具并行；每次新浪回退增加启动开销。
+单元测试mock进程退出和超时、参数/结果传输，并继续隔离所有网络请求。
+用户原始原生崩溃未稳定复现，本次验证的是进程隔离与故障转换边界。

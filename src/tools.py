@@ -19,6 +19,46 @@ from langchain_core.runnables import RunnableConfig
 
 from langchain_core.tools import tool
 
+_SINA_FUNCTIONS = {"stock_zh_a_daily", "stock_zh_index_daily"}
+
+
+def _call_sina(function: str, **kwargs):
+    """Run JS-decoding providers in a fresh interpreter; native aborts cannot kill UI."""
+    import json
+    import subprocess
+    import sys
+    from io import StringIO
+    from pathlib import Path
+    import pandas as pd
+
+    if function not in _SINA_FUNCTIONS:
+        raise ValueError("unsupported isolated provider")
+    completed = subprocess.run(
+        [sys.executable, "-m", "src.tools"],
+        input=json.dumps({"function": function, "kwargs": kwargs}),
+        text=True, capture_output=True, timeout=60,
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"native provider exited ({completed.returncode})")
+    return pd.read_json(StringIO(completed.stdout), orient="records")
+
+
+def _sina_worker():
+    """Worker entry point. Never execute provider-controlled text as Python code."""
+    import contextlib
+    import json
+    import sys
+    payload = json.load(sys.stdin)
+    function = payload["function"]
+    if function not in _SINA_FUNCTIONS:
+        raise ValueError("unsupported isolated provider")
+    with contextlib.redirect_stdout(sys.stderr):
+        import akshare as ak
+        frame = getattr(ak, function)(**payload["kwargs"])
+    sys.stdout.write(frame.to_json(orient="records", date_format="iso"))
+
+
 # 环境变量名（单一真源，UI / 测试 / 工具层共用，避免各处硬编码字符串拼错）
 USE_REAL_DATA_ENV = "USE_REAL_DATA"
 
@@ -213,7 +253,7 @@ def _index_quote(ak: object, name: str, em_symbol: str, sina_symbol: str) -> str
 
     # 源2：新浪（只有 OHLC，涨跌幅自行算）
     try:
-        df = ak.stock_zh_index_daily(symbol=sina_symbol)
+        df = _call_sina("stock_zh_index_daily", symbol=sina_symbol)
         if df is not None and len(df) >= 2:
             last = float(df.iloc[-1]["close"])
             prev = float(df.iloc[-2]["close"])
@@ -521,7 +561,7 @@ def get_stock_performance(query: str) -> str:
         # 源2：新浪（英文列名），东财被断连时兜底
         if df is None or len(df) == 0:
             prefix = "sh" if code.startswith(("6", "9")) else "sz"
-            df = ak.stock_zh_a_daily(
+            df = _call_sina("stock_zh_a_daily",
                 symbol=f"{prefix}{code}", start_date=start, end_date=end, adjust="qfq"
             )
             cols = ("close", "high", "low", "volume")
@@ -615,7 +655,7 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
                     df = None
                 if df is None or df.empty:
                     prefix = "sh" if code.startswith("6") else "sz"
-                    df = ak.stock_zh_a_daily(symbol=prefix + code, start_date=start.strftime("%Y%m%d"),
+                    df = _call_sina("stock_zh_a_daily", symbol=prefix + code, start_date=start.strftime("%Y%m%d"),
                         end_date=end.strftime("%Y%m%d"), adjust="" if adjustment == "none" else adjustment)
                     provider = "akshare/sina"
                     if df is not None:
@@ -632,7 +672,7 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
                     sina_code = next((item[2] for item in _INDEXES if item[1] == code), None)
                     if sina_code is None:
                         return unavailable("index_source_unavailable", "指数主源不可用，尚未配置该指数备用市场代码。")
-                    df = ak.stock_zh_index_daily(symbol=sina_code)
+                    df = _call_sina("stock_zh_index_daily", symbol=sina_code)
                     provider = "akshare/sina"
                     if df is not None and not df.empty:
                         df = df.rename(columns={"date": "日期", "close": "收盘", "open": "开盘",
@@ -755,3 +795,7 @@ def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str |
             "limitations": limitations}, ensure_ascii=False, allow_nan=False)
     except Exception:
         return unavailable("valuation_unavailable", "估值获取或验证失败，未注册数据集，请稍后重试。")
+
+
+if __name__ == "__main__":
+    _sina_worker()

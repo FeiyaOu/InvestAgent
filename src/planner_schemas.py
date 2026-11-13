@@ -1,7 +1,7 @@
 """Validated task plans for the future parent graph."""
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from typing_extensions import TypedDict
 from src.analytics_state import AnalyticsAssumptions
 
@@ -17,6 +17,12 @@ class AnalyticsTaskParameters(BaseModel):
     subjects: list[str] = Field(default_factory=list)
     time_range: str = ""
     assumptions: AnalyticsAssumptions = Field(default_factory=AnalyticsAssumptions)
+
+    @field_validator("assumptions", mode="before")
+    @classmethod
+    def default_null_assumptions(cls, value):
+        """Optional model-generated null is equivalent to omitting assumptions."""
+        return {} if value is None else value
 
 
 class PlanTask(BaseModel):

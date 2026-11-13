@@ -202,3 +202,41 @@ def test_planner_prompt_provides_current_date_and_collection_rules():
     assert "get_price_history" in prompts[0][0].content
     assert "get_valuation_snapshot" in prompts[0][0].content
     assert "当前上海日期" in prompts[0][-1].content
+
+
+def test_invalid_plan_exposes_field_and_constraint_without_input_value():
+    bad = plan()
+    bad['tasks'][0]['category'] = 'private-invalid-category'
+    result, _ = invoke([bad, bad])
+    message = result['planning_error']['message']
+    assert 'tasks.0.category' in message
+    assert 'private-invalid-category' not in message
+    assert '缩小' not in message
+
+
+def test_mixed_performance_valuation_repair_preserves_separate_dependencies():
+    tasks = [task('prices'), task('valuations'), task('performance', 'analytics', ['prices']),
+             task('comparison', 'analytics', ['valuations'])]
+    tasks[0]['question'] = '获取600519和000858过去一年qfq日线'
+    tasks[1]['question'] = '获取600519和000858最新估值快照'
+    bad = plan([task('a', 'analytics')])
+    result, chain = invoke([bad, plan(tasks)], {'user_query': '比较茅台和五粮液过去一年收益、波动率、回撤及最新PE TTM和PB'})
+    assert result['planning_status'] == 'ready'
+    assert result['plan']['tasks'][2]['depends_on'] == ['prices']
+    assert result['plan']['tasks'][3]['depends_on'] == ['valuations']
+    assert 'analytics' in chain.invoke.call_args.args[0]['correction']
+
+
+def test_optional_null_assumptions_use_defaults():
+    analysis = task('a', 'analytics', ['d'])
+    analysis['analytics_parameters'] = {'subjects': ['600519'], 'assumptions': None}
+    result, _ = invoke([plan([task('d'), analysis])])
+    assert result['planning_status'] == 'ready'
+    assert result['plan']['tasks'][1]['analytics_parameters']['assumptions'] == {'missing_data': 'no_fill'}
+
+
+def test_string_assumptions_are_still_rejected():
+    analysis = task('a', 'analytics', ['d'])
+    analysis['analytics_parameters'] = {'assumptions': 'qfq'}
+    with pytest.raises(ValidationError):
+        TaskPlan.model_validate(plan([task('d'), analysis]))

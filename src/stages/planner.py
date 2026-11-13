@@ -47,6 +47,19 @@ analytics 已可计算结构化数据；investment_strategy 尚未接入，仍�
 - 已有分析任务产物可通过analytics直接依赖复用；避免为每个统计量重复采集同一数据。
 - 投资机会任务需要定量依据时依赖analytics；不自动为报告内部拆出重复采集或分析任务。
 
+组合请求示例（历史表现与最新估值是两条独立数据链，不需要用户拆问）：
+“比较茅台和五粮液过去一年收益、波动率、最大回撤和最新PE TTM/PB”通常规划四个任务：
+prices: market_data，获取600519/000858过去一年qfq日线，depends_on=[]；
+valuations: market_data，获取两公司最新估值快照，depends_on=[]；
+performance: analytics，分别计算两公司收益、波动率和回撤，depends_on=[prices]；
+valuation_compare: analytics，比较PE TTM/PB，depends_on=[valuations]。
+上述ID仅为示例，输出仍严格遵循schema。不要把工具参数加为任务顶层字段；
+market_data不填写analytics_parameters。analytics的assumptions仅允许periods_per_year、window、missing_data，
+assumptions必须是JSON对象（例如{{"periods_per_year":252,"missing_data":"no_fill"}}），
+无额外假设时省略或使用空对象{{}}，不能输出字符串或数组。
+不要添加adjustment、risk_free_rate、metrics等未定义字段；数据口径和所需指标写入question。
+修正反馈指出的字段或依赖错误必须在下一次计划中修复，不得机械重复上次无效结构。
+
 根据现有上下文回答风险追问时保留相关研究背景，不自动重新生成报告。
 最多12个任务，合并相关子问；无法可靠形成计划时返回 needs_clarification，tasks=[]，
 并提出清晰的澄清问题。ready 必须有任务且 clarification_questions=[]。
@@ -106,4 +119,4 @@ def planner(state: PlannerState, *, max_retries: int = 1) -> dict:
             correction = str(exc)
         except Exception:
             return _failure("model_error", "任务规划模型调用失败，请稍后重试。", attempt)
-    return _failure("invalid_plan", "无法生成有效任务计划，请缩小或明确问题后重试。", max_retries + 1)
+    return _failure("invalid_plan", "Planner生成的计划未通过校验，未执行任务。最后一次校验反馈：" + correction, max_retries + 1)
