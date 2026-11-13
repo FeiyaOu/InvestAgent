@@ -5,78 +5,54 @@
 
 ---
 
-## 功能目标
+## 当前运行架构（2026-11-13）
 
-输入一个研究主题（如"新能源行业"）和行业焦点（如"光伏"），
-InvestAgent 自动判断查询复杂度并选择执行路径：
+公共入口和 Streamlit 已切换为请求级父图：
 
-- **Reactive 路径**：简单市场查询，调用 AKShare 工具快速回答
-- **Deliberative 路径**：复杂研究请求，经过5个专家角色依次处理，生成结构化投研报告
-
----
-
-## 系统架构
-
-```
-用户输入（研究主题 / 简单问题）
-        ↓
-   [assess]          -- 协调层：判断 processing_mode
-        ↓
-   ┌────┴────┐
-reactive   deliberative
-   ↓              ↓
-[reactive_agent]  [perception]    -- 市场数据分析师：AKShare 数据收集
-  ↕ 环①              ↓
-[tools]           [modeling]      -- 宏观经济学家：构建市场内部模型
-   ↓                  ↓
-[extract_resp]    [reasoning]     -- 策略研究员：生成3个候选投资方案
-   ↓                  ↓
-  END            [decision]       -- 投资委员会主席：选择最优方案
-                      ↓
-                  [report]        -- 报告撰写专家：生成结构化 JSON 报告
-                      ↓
-                  [validator]     -- 合规审查员：校验 C1–C7
-                   ↕ 环②
-                      ↓（合格 → END，不合格 → decision，最多重试2次）
-                     END
+```text
+用户输入 + 显式会话摘要
+  → initialize → Planner → Supervisor → Composer → final_response
+                     │        ├─ market_data 子图（LLM / ToolNode 循环）
+                     │        ├─ report 子图（原六节点保持不变）
+                     │        ├─ analytics 子图（计算与图表）
+                     │        └─ investment_strategy 子图（V1约束/压力测试）
+                     └─ 澄清或失败 → Composer，不执行专家
 ```
 
-**依赖方向：** `tools ← perception ← modeling ← reasoning ← decision ← reporter ← validator`
+任务按能力与产物分类，不按整条消息复杂度二选一；只有明确报告请求产生 report 任务。
+父级采用 ParentState，task_results 按 task_id 保存统一 TaskResult；
+报告 final_report、四节点输出均在对应任务 result 内，父级不提供顶层 processing_mode / final_report。
+原 assess_query、Reactive 工具循环和回答提取节点已删除。
+报告内部工具、节点、提示和重试行为保持不变，C1–C7 不变。
 
-禁止反向依赖（validator 不能 import perception）。
+完整接口与演进见 [工作流演进规格](workflow-evolution.md) 第 8–16 节。
+历史阶段描述若与本文冲突，以当前规格及演进规格第 16 节为准。
 
----
+## 公共入口与会话
 
-## Reactive 路径工具清单
+- `create_invest_agent()` 返回 `create_parent_graph()`，不设置 checkpointer。
+- `run_invest_agent(user_query, *, conversation_context="", report_parameters=None, config=None)`
+  返回 ParentState；不再接受 thread_id 或全局 research_topic / industry_focus / time_horizon。
+- report_parameters 可按已知报告 task_id 指定参数；尚无任务 ID 时应将主题、行业和时间写入问题。
+- config 供追踪 callbacks / tags 使用，传入 thread_id 不会创建自动记忆。
+- Streamlit 只在本会话内保存历史，每次传入最近三轮的用户问题及回答摘要。
+  每轮问题截取800字符、回答截取1200字符；不是模型生成的长期摘要，也不是持久化。
+- 刷新或服务重启后可能丢失会话；「新对话」清空本地摘要与结果。
 
-| 工具函数 | 数据来源 | 描述 |
-|---|---|---|
-| `get_sector_performance(sector)` | AKShare `stock_board_industry_summary_ths()` | 查询指定行业板块涨跌幅、成交额、主力净流入 |
-| `get_index_performance()` | AKShare `index_zh_a_hist()` | 查询主要指数（上证、创业板）近期行情 |
-| `get_macro_indicators()` | AKShare `macro_china_pmi_yearly()` | 查询 PMI、GDP 等宏观经济指标 |
-| `search_stock_news(keyword)` | AKShare `stock_news_em()` | 查询与关键词相关的市场新闻 |
+## 展示与流式事件
 
-所有工具必须包含 `try/except` fallback，网络异常时返回提示文本而非抛出异常。
-环境变量 `USE_REAL_DATA=false` 时返回预设 mock 数据，用于测试和离线演示。
+页面展示任务分类、依赖、终止状态、数据证据与回答。
+任务完成即可展示，模型汇总随后返回；不把 partial 或 unsupported 冒充完全成功。
+报告四字段 perception_data / world_model / reasoning_plans / selected_plan 按报告任务分别显示。
+最终报告正文、下载与评估继续隐藏，后端仍生成和校验报告。
+Supervisor 发出 task_started 自定义事件标识 task_id/category，供顺序执行时关联内部节点事件。
+子图消息不写入父状态，UI 不使用 get_state() 或 MemorySaver。
 
----
+## 工具与数据边界
 
-## assess_query 路由规则
-
-`assess_query` 节点的 LLM 必须遵守以下路由判断规则，包括多轮场景下的跟进检测：
-
-### 单轮规则
-- **reactive**：简单直接的查询（查当天行情、询问指数点位、查产品信息）
-- **deliberative**：需要深度研究的查询（行业分析、投资机会报告、多维度研究）
-
-### 多轮跟进检测规则（有对话历史时）
-- **跟进问题 → reactive**：当前查询是对已有分析的追问（细节/风险/建议），不需要新数据
-  - 例："上述分析中哪个风险最值得关注？"
-  - 例："你刚才说的投资论点能展开说说吗？"
-- **全新话题 → deliberative**：研究主题与历史对话无关联，需要重新采集数据
-  - 例："请分析医疗器械行业的投资机会"（前一轮是新能源）
-
-`assess_query` 的 prompt 必须包含对话历史摘要，让 LLM 能够区分跟进问题和全新研究请求。
+Market Data 首版复用 src/tools.py 的五个工具（行业、指数、宏观、新闻、个股）。
+AKShare 访问只在工具层，异常必须 fallback；模拟模式必须明确标记。
+历史价格、财务与量化扩展仍以演进规格为准，不因 UI 迁移自动新增。
 
 ---
 
@@ -155,16 +131,20 @@ Deliberative 路径的最终输出必须严格遵循以下 JSON 结构：
 
 ---
 
-### 适用于两条路径（路由行为约束）
+### 适用于父图的任务与响应约束
 
-#### C8：路由有效值
-- `processing_mode` 只能是 `reactive` 或 `deliberative`
-- `assess` 节点输出其他值视为路由错误
-- 默认回退值为 `reactive`
+#### C8：任务类别与计划有效性
 
-#### C9：Reactive 路径响应完整性
-- 当 `processing_mode == reactive` 时，`final_response` 必须是**非空字符串**
-- 空字符串或 `None` 说明 reactive 路径未成功生成回答
+- category 只能为 market_data / analytics / investment_strategy / report。
+- TaskPlan 拒绝重复 ID、未知/重复/自依赖、有向环与状态矛盾；失败计划不得执行。
+- 旧 processing_mode 合法性约束退出公共接口，仅报告局部 State 保留兼容字段。
+
+#### C9：用户响应完整性
+
+- 对公共入口可处理的请求（包括规划失败、澄清、能力未接入和局部失败），
+  final_response 必须为非空字符串。
+- 回答不隐瞒失败、缺失信息或 unsupported；模型汇总失败时保留确定性结果。
+- 此要求不代表进程中断、调用方主动取消等外部故障也能保证生成响应。
 
 ---
 
@@ -180,12 +160,8 @@ MIN_SOURCES = 3
 MIN_THESIS_LENGTH = 50
 ```
 
-`src/agent.py` 必须定义以下常量：
-
-```python
-VALID_PROCESSING_MODES = {"reactive", "deliberative"}
-MAX_VALIDATOR_RETRIES = 2
-```
+`src/planner_schemas.py` 定义四类 `TaskCategory` Literal；
+`src/state.py` 的 MAX_VALIDATOR_RETRIES=2 只属于报告子图。
 
 ---
 
@@ -223,7 +199,8 @@ def validate_report(report: dict) -> list[dict]:
 
 ## Pydantic 阶段输出模型
 
-每个 Deliberative 阶段的 LLM 输出必须通过对应的 Pydantic 模型验证：
+报告阶段模型定义如下。历史阶段链仍按原实现使用 JSON 解析，并未全部调用这些模型；
+本轮不修改报告内部验证路径。新 Planner / Market Data / TaskResult / Composer 已在各自边界使用 Pydantic：
 
 | 阶段 | 模型类 | 关键字段 |
 |---|---|---|
@@ -255,3 +232,87 @@ pytest tests/test_agent.py -v                 # C8–C9 路由测试
 pytest tests/ -m integration                  # 集成测试（需 DASHSCOPE_API_KEY）
 python linters/check_agent_structure.py       # 结构 lint 检查
 ```
+
+
+## Analytics 建设进展（2026-11-12）
+
+已完成数据契约、请求内存储、结构化价格/估值快照采集、四个V1计算工具和独立Analytics子图。
+analytics-methodology运行时skill已创建并固定加载；Supervisor调度/引用交接及父图双Store注入已完成；Planner数据依赖首版与Composer分析汇总已完成；Plotly 分析看板首版已完成（当前会话最近请求快照）。
+父图analytics已启用；未执行真实模型/API端到端评估。
+完整状态、无风险利率适用范围、样本不足及协方差产物边界见 [Analytics实施规格](analytics-agent.md)。
+
+Planner计划现在检查Analytics的直接数据依赖，并支持可选analytics_parameters；Composer展示分析指标、假设和限制，见Analytics规格步骤7a。
+
+
+## Planner 校验可观测性与输出约束计划（2026-11-13）
+
+已确认、待实现：统一字段级Pydantic诊断和逐次重试UI展示；减少模型生成的固定假设字段，
+代码补齐默认策略；验证当前模型提供方支持后再迁移结构化输出，并评估前后失败率。
+不改变报告C1–C9或取消运行时业务校验。详见[演进规格中的问题与修复计划](workflow-evolution.md#planner-校验问题识别与改进计划2026-11-13)。
+
+
+Planner诊断交付状态（2026-11-13）：阶段一首版完成，Planner字段级错误及逐次尝试事件已接UI。
+仅保留安全类型/约束元信息，输入值预览省略；阶段二输出简化及阶段三结构化迁移仍为计划。
+
+
+Planner阶段二、三首版状态（2026-11-13）：固定missing_data不再要求模型输出，代码补齐；
+已核实ChatTongyi使用function calling并迁移默认模式，保留PLANNER_OUTPUT_MODE=json。
+真实小样本各3/3首次校验通过，不等于稳定性改善或端到端语义验收。运行时契约/C1–C9不变。
+
+
+## Investment Strategy/Risk 后续范围（2026-11-13）
+
+已确认、尚未实现：V1先做风险约束检查与简单价格冲击压力测试；估值情景须先补盈利数据契约。
+V2评估组合优化、风险预算/风险平价、HRP与Black-Litterman。保持数据采集与Analytics职责分离，
+不变更报告C1–C9。详见[Strategy/Risk专题规格](investment-strategy-agent.md)。
+
+
+Strategy/Risk State方案（2026-11-13，已确认/待实现）：独立StrategyState，授权引用输入，
+可选持仓与显式用户约束/情景，规范结果经TaskResult交接；不继承父图完整状态，不信任LLM数值。
+详细字段及状态语义见[Strategy/Risk专题规格](investment-strategy-agent.md)。报告C1–C9保持不变。
+
+
+## Strategy/Risk V1 实施交付（2026-11-13）
+
+原先unsupported状态由本节覆盖：独立StrategyState/StrategyStore、两个确定性工具及有界ToolNode子图已接入。
+Planner strategy_parameters保留显式持仓/用户限制/情景，Supervisor仅交接直接数据依赖，
+父图与response_graph注入请求级策略存储，Composer/Streamlit展示规范结果和执行记录。
+数值从任务作用域内产物重建；报告C1–C9与内部节点未改。
+实施步骤与边界见[开发规格](strategy-agent-development.md)，契约见[专题规格](investment-strategy-agent.md)。
+
+
+Strategy回撤检查失败保护（2026-11-13）：有规范计算产物时解释失败降为partial并保留计算结果；
+无产物的技术失败仍failed。具体安全错误码与字段诊断进入执行记录。Strategy任务失败时Composer不代做约束判断，
+直接展示已有任务结果。详见Strategy专题的回撤约束链路失败保护记录，报告C1–C9不变。
+
+
+Strategy工具适用性（2026-11-13）：无约束/无情景的解释不绑定工具；V1已有工具由显式输入确定并经ToolNode执行。
+意外工具请求记录诊断、拒绝执行并使用既有有界输出修正，不取消授权检查。报告C1–C9不变。
+
+
+Strategy解释模型输出简化（2026-11-13）：模型schema移除artifact_ids，执行产物由代码选取；
+上游analysis引用仍经evidence_ids授权校验。引用错误提供字段诊断与分类可用ID清单，不放宽范围检查。
+详见Strategy专题的引用字段混淆复现记录，报告C1–C9不变。
+
+策略产品场景与工具扩展讨论归档（2026-11-13）：见[Strategy用户问题与扩展参考](strategy-user-questions-and-expansion.md)，
+包含六类问题、当前覆盖、基本面/公告/估值情景的建议优先级及未来验收样例；非新增实现承诺。
+
+Strategy已知缺陷状态更正（2026-11-13）：用户复测纯策略解释invalid_output仍存在，未解决，按用户要求暂缓。
+本地测试/模型抽样不替代该真实链路验收。已有修正保留，后续再处理；见[专题问题记录](investment-strategy-agent.md#未解决问题纯策略解释-invalid_output2026-11-13)。
+
+
+## 报告阅读与下载首版（2026-11-13）
+
+用户确认先做生成后立即阅读/下载：Streamlit新增报告阅读页签与Markdown/HTML下载，
+节点输出保持。覆盖此前“最终报告正文及下载隐藏”的当前UI策略，报告生成与C1–C9不变。
+会话最近结果复用，不重跑LLM，不提供长期链接或持久化。
+分享链接、外部存储、权限、PDF与云端部署作为后续扩展，详见[报告交付规格](report-delivery.md)。
+
+
+明确报告意图规则（2026-11-13）：当前原文明确生成投研报告的ready计划须包含report；
+明确拒绝报告不得生成report。有限措辞校验错误进入Planner有界修正，修正失败不执行错误计划。
+不要求额外的“完整”关键词，不改变报告C1–C9或报告内部流程，详见工作流演进的报告意图记录。
+
+
+UI导航更新（2026-11-13）：结果层“回答 / 数据与分析 / 报告中心”，报告生成节点与专家日志移至默认收起的开发者调试区。
+六条默认示例覆盖数据/组合工具与报告，边界及已知问题示例另放折叠区；选择仅填入不运行，C1–C9保持不变。

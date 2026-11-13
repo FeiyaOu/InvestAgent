@@ -1,555 +1,390 @@
-# -*- coding: utf-8 -*-
-"""
-InvestAgent — Streamlit UI（多轮对话版）
-
-混合型智能投研助手演示界面，支持多轮对话。
-- 每个浏览器会话自动分配唯一 thread_id（MemorySaver 状态隔离）
-- 对话历史面板展示历轮摘要
-- "🔄 新对话"按钮重置 thread_id，开启全新会话
-"""
-
+"""Parent-graph research UI; explicit session summaries, no checkpoint memory."""
 from __future__ import annotations
 
-import json
 import os
+from datetime import datetime, timezone
 import sys
-import uuid
+from pathlib import Path
 
-# 将项目根目录加入 Python 路径，确保 Streamlit Cloud 部署时 src 包可被正常导入
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from dotenv import dotenv_values, load_dotenv
 import streamlit as st
 
-from src.tools import (
-    USE_REAL_DATA_ENV,
-    parse_bool,
-    akshare_available,
-    data_mode,
-    set_use_real_data,
-)
+from app.analytics_dashboard import render_analytics_task
+from app.strategy_dashboard import render_strategy_task
+from app.report_viewer import render_report
+from app.example_queries import example_queries, BOUNDARY_EXAMPLES
 
-# 自动加载项目根目录的 .env 文件
+from src.tools import USE_REAL_DATA_ENV, parse_bool, data_mode, set_use_real_data
+
 _ENV_PATH = os.path.join(_project_root, ".env")
-load_dotenv(dotenv_path=_ENV_PATH)
+load_dotenv(_ENV_PATH)
+_REPORT_FIELDS = ("perception_data", "world_model", "reasoning_plans", "selected_plan")
+_LABELS = {"completed": "已完成", "partial": "部分完成", "failed": "失败",
+           "unsupported": "尚未接入", "blocked": "前置任务不可用"}
 
+st.set_page_config(page_title="InvestAgent — 投研工作台", page_icon="📊", layout="wide")
+st.markdown("""
+<style>
+.st-key-developer_debug [data-testid="stExpander"]:not([data-testid="stExpander"] [data-testid="stExpander"]) > details > summary {
+    background-color: #e0f2fe;
+    color: #075985;
+    border-radius: 8px;
+}
+.st-key-developer_debug [data-testid="stExpander"]:not([data-testid="stExpander"] [data-testid="stExpander"]) > details > summary:hover {
+    background-color: #bae6fd;
+    color: #075985;
+}
+</style>
+""", unsafe_allow_html=True)
 
-def _configured_use_real_data() -> bool:
-    """toggle 的初始值取自 .env 文件本身，而不是进程 os.environ。
-
-    os.environ 会被上一次（甚至其他浏览器会话的）toggle 写脏，
-    直接拿它当默认值会让 .env 里的 USE_REAL_DATA=true 永远生效不了。
-    """
-    raw = dotenv_values(_ENV_PATH).get(USE_REAL_DATA_ENV)
-    if raw is None:
-        raw = os.getenv(USE_REAL_DATA_ENV)
-    return parse_bool(raw, default=True)
-
-# ============================================================
-# 页面配置
-# ============================================================
-
-st.set_page_config(
-    page_title="InvestAgent — 混合型智能投研助手",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ============================================================
-# 会话状态初始化（多轮对话核心）
-# ============================================================
-
-if "thread_id" not in st.session_state:
-    st.session_state["thread_id"] = str(uuid.uuid4())
-
-if "conversation_history" not in st.session_state:
-    st.session_state["conversation_history"] = []
-
-if "turn_count" not in st.session_state:
-    st.session_state["turn_count"] = 0
-
-if "last_result" not in st.session_state:   # ← 新增：持久化最新运行结果
-    st.session_state["last_result"] = None
-
-if "last_eval_results" not in st.session_state:
-    st.session_state["last_eval_results"] = None
-
-if "query_input" not in st.session_state:
-    st.session_state["query_input"] = ""
-
-# toggle 的持久状态：首次进入按 .env 配置初始化，之后由 widget 自己维护
+# Invalidate session objects from the old dual-path UI on hot reload.
+if st.session_state.get("ui_version") != 2:
+    st.session_state.update(ui_version=2, conversation_history=[], last_result=None,
+                            execution_events=[], report_progress={}, debug_events=[], analysis_snapshots={}, turn_count=0)
+for key, default in {"conversation_history": [], "last_result": None, "execution_events": [],
+                     "report_progress": {}, "debug_events": [], "analysis_snapshots": {}, "turn_count": 0, "query_input": ""}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 if "use_real_data" not in st.session_state:
-    st.session_state["use_real_data"] = _configured_use_real_data()
-
-# 每次脚本重跑（包括 st.rerun 之后）都先把会话选择同步进 os.environ，
-# 这样工具层的读取不再依赖"侧边栏必须先渲染"这个隐式顺序。
+    raw = dotenv_values(_ENV_PATH).get(USE_REAL_DATA_ENV, os.getenv(USE_REAL_DATA_ENV))
+    st.session_state["use_real_data"] = parse_bool(raw, default=True)
 set_use_real_data(st.session_state["use_real_data"])
 
-# ============================================================
-# 侧边栏：设置
-# ============================================================
+
+def _fill_example(ident):
+    cards=example_queries() + BOUNDARY_EXAMPLES
+    st.session_state['query_input']=next(card['query'] for card in cards if card['id']==ident)
+
+
+def _render_nodes(payload):
+    for field in _REPORT_FIELDS:
+        st.subheader(field)
+        if payload.get(field) is None:
+            st.info("尚未返回结果。")
+        else:
+            st.json(payload[field], expanded=True)
+
+
+def _render_tasks(state):
+    plan = state.get("plan") or {}
+    records = state.get("task_results", {})
+    rows = [{"task_id": t["task_id"], "类别": t["category"], "问题": t["question"],
+             "依赖": ", ".join(t["depends_on"]),
+             "状态": records.get(t["task_id"], {}).get("status", "pending")}
+            for t in plan.get("tasks", [])]
+    if rows:
+        st.dataframe(rows, hide_index=True, width="stretch")
+    else:
+        st.info("尚无可执行任务。")
+
+
+def _debug_details(values):
+    """Copy only observable node output; exclude provider metadata and report text."""
+    details = {key: values[key] for key in (
+        "plan", "planning_status", "planning_attempts", "planning_error",
+        "last_task_id", "supervisor_status", "supervisor_error", "tool_rounds",
+        "tool_calls_used", "output_retries", "status", "error",
+    ) if key in values}
+    if "messages" in values:
+        details["messages"] = []
+        for msg in values["messages"]:
+            role = getattr(msg, "type", "unknown")
+            if role == "system":
+                continue
+            item = {"role": role, "content": getattr(msg, "content", "")}
+            if getattr(msg, "tool_calls", None):
+                item["tool_calls"] = msg.tool_calls
+            if getattr(msg, "tool_call_id", None):
+                item["tool_call_id"] = msg.tool_call_id
+            details["messages"].append(item)
+    result = values.get("result")
+    if isinstance(result, dict) and "answer" in result and "evidence_ids" in result:
+        details["validated_result"] = {key: result.get(key) for key in ("answer", "evidence_ids", "missing_information", "dataset_refs")}
+    if "task_results" in values:
+        details["tasks"] = [{"task_id": ident, "category": r["category"], "depends_on": r["depends_on"],
+                             "status": r["status"], "error": r.get("error")}
+                            for ident, r in values["task_results"].items()]
+    return details
+
+
+def _render_planning(state, debug):
+    with st.expander("Planner · 完整计划与规划状态", expanded=True):
+        st.write({key: state.get(key) for key in ("planning_status", "planning_attempts", "planning_error")})
+        for event in debug:
+            if event["node"] == "planner_attempt":
+                st.caption(f"第 {event['details']['attempt']} 次规划 · {event['details']['status']}")
+                st.json(event)
+        if state.get("plan"):
+            st.json(state["plan"], expanded=True)
+        else:
+            st.info("等待 Planner 返回计划。")
+    with st.expander("Supervisor · 调度与结果收集", expanded=True):
+        st.caption("当前顺序调度；以下记录显示任务开始、依赖及终止结果。")
+        for event in debug:
+            if event["node"] == "task_started" or event["details"].get("tasks") is not None:
+                st.json(event)
+
+
+def _render_experts(state, debug):
+    with st.expander("Strategy/Risk · 模型、工具与校验", expanded=True):
+        found = False
+        for event in debug:
+            if event.get("category") == "investment_strategy":
+                found = True
+                st.json(event)
+        if not found:
+            st.info("暂无 Strategy/Risk 执行事件。")
+    with st.expander("Analytics · 模型、工具与校验", expanded=True):
+        found = False
+        for event in debug:
+            if event.get("category") == "analytics":
+                found = True
+                st.json(event)
+        if not found:
+            st.info("暂无 Analytics 执行事件。")
+    with st.expander("Market Data · 模型输出、工具批次与校验", expanded=True):
+        st.caption("同一条 AI 消息里的多个 tool_calls 是同轮批次，可由 ToolNode 并行执行；跨消息批次为后续轮次。时间为收到节点事件的时间，不代表单个工具开始或结束时间。")
+        found = False
+        for event in debug:
+            if event.get("category") == "market_data" and event["node"] in {"initialize", "agent", "tools", "finalize"}:
+                found = True
+                st.markdown(f"**{event['task_id']} · {event['node']} · 事件 {event['step']}**")
+                st.json(event, expanded=True)
+        if not found:
+            st.info("暂无 Market Data 内部事件；需运行新请求采集。")
+
+
+def _render_debug(state, debug):
+    with planning_slot.container():
+        _render_planning(state, debug)
+    with experts_slot.container():
+        _render_experts(state, debug)
+
+
+def _render_results(state, progress, snapshots=None, render_id="final"):
+    if snapshots is None:
+        snapshots = st.session_state.get("analysis_snapshots", {})
+    records = state.get("task_results", {})
+    with answer_tab:
+        if state.get("final_response"):
+            st.markdown(state["final_response"])
+        elif records:
+            for ident, record in records.items():
+                st.markdown(f"**{ident} · {_LABELS.get(record['status'], record['status'])}**")
+                if record["category"] == "market_data":
+                    st.write((record.get("result") or {}).get("answer", ""))
+        else:
+            st.info("等待规划与任务结果。")
+        if state.get("planning_status") == "needs_clarification":
+            st.info("请补充信息后再次提交，当前未执行专家任务。")
+        elif state.get("planning_status") == "failed" or state.get("supervisor_status") == "failed":
+            st.error("本轮研究未完成，请查看任务状态与执行记录。")
+        elif state.get("supervisor_status") == "partial":
+            st.warning("本轮部分完成，未接入或失败的任务已单独标记。")
+        if state.get("composition_status") == "fallback":
+            st.warning("汇总生成失败，已保留逐任务结果。")
+    with data_tab:
+        found = False
+        for ident, record in records.items():
+            payload = record.get("result") or {}
+            if record.get("error"):
+                st.error(f"{ident} [{record['error']['type']}]：{record['error']['message']}")
+            if record["category"] == "market_data":
+                found = True
+                st.markdown(f"**{ident} · {record['question']}**")
+                st.write(payload.get("answer", "数据查询未完成。"))
+                for ref in payload.get("dataset_refs", []):
+                    st.markdown("**已注册历史数据集（仅本次请求有效）**")
+                    st.json(ref)
+                for evidence in payload.get("evidence", []):
+                    st.json(evidence)
+                for missing in payload.get("missing_information", []):
+                    st.warning(missing)
+        if not found:
+            st.info("尚无数据证据。")
+    with analysis_tab:
+        st.caption("分析图表来自已验证计算产物；仅在当前会话保留最近请求。Strategy/Risk V1 已接入。")
+        for ident, record in records.items():
+            if record["category"] == "analytics":
+                render_analytics_task(ident, record, snapshots, render_id=render_id)
+            if record["category"] == "investment_strategy":
+                render_strategy_task(ident, record)
+    with report_tab:
+        st.caption("四节点完整输出保持可见；成品报告请到「报告中心」查看和下载。")
+        reports = dict(progress)
+        for ident, record in records.items():
+            if record["category"] == "report":
+                reports[ident] = {**reports.get(ident, {}), **(record.get("result") or {})}
+        if not reports:
+            st.info("本轮尚无报告节点结果。")
+        for ident, payload in reports.items():
+            st.markdown(f"**报告任务 {ident}**")
+            _render_nodes(payload)
+    with reader_tab:
+        reports = {task['task_id']:{'question':task['question'], 'status':'running', 'result':None}
+                   for task in (state.get('plan') or {}).get('tasks',[]) if task['category']=='report'}
+        reports.update({ident:record for ident,record in records.items() if record['category']=='report'})
+        for ident, record in reports.items():
+            render_report(ident, record, render_id=render_id)
+        if not reports:
+            st.info("这里展示完整报告的生成状态、成品阅读与下载。普通行情和分析查询不会生成报告。")
+            st.button("试试生成报告", key=f"empty_report_{render_id}", on_click=_fill_example, args=("report",))
+
 
 with st.sidebar:
     st.title("⚙️ 设置")
-
-    def _on_data_mode_change() -> None:
-        """toggle 改变时立刻把新值写进 os.environ，不等下一次脚本重跑。"""
-        set_use_real_data(st.session_state["use_real_data"])
-
-    st.toggle(
-        "使用真实 AKShare 数据",
-        key="use_real_data",          # 显式 key：状态存入 session_state，跨 rerun 不丢失
-        on_change=_on_data_mode_change,
-        help="关闭时使用 mock 数据（适合演示或网络不稳定时）。默认值来自 .env 的 USE_REAL_DATA。",
-    )
-
-    # 回显工具层实际生效的模式（读的是 src.tools，不是本地变量），
-    # toggle 与真实行为不一致时一眼可见
-    _mode = data_mode()
-    if _mode == "real":
-        _ak_ok, _ak_info = akshare_available()
-        if _ak_ok:
-            st.success(f"🟢 数据源：真实 AKShare（v{_ak_info}）")
-        else:
-            st.error(f"🔴 已选真实数据，但 akshare 不可用：{_ak_info}\n\n请执行 `pip install akshare`")
-    else:
-        st.info("🟡 数据源：模拟 mock 数据")
-
-    with st.expander("🔍 数据源自检"):
-        st.caption("直接调用工具层，确认返回的是真实行情还是 mock / 降级文本")
-        if st.button("运行自检", use_container_width=True):
-            from src.tools import (
-                get_index_performance,
-                get_macro_indicators,
-                get_sector_performance,
-                search_stock_news,
-            )
-
-            probes = [
-                ("行业板块", lambda: get_sector_performance.invoke({"sector": "光伏"})),
-                ("指数行情", lambda: get_index_performance.invoke({})),
-                ("宏观指标", lambda: get_macro_indicators.invoke({})),
-                ("市场新闻", lambda: search_stock_news.invoke({"keyword": "新能源"})),
-            ]
-            for name, probe in probes:
-                with st.spinner(f"{name}..."):
-                    try:
-                        out = probe()
-                    except Exception as e:  # 工具内部已兜底，这里只防御性兜一层
-                        out = f"调用异常：{type(e).__name__}: {e}"
-                st.markdown(f"**{name}**")
-                st.caption(out[:400])
-
-    st.divider()
-
-    # ---- 多轮对话控制 ----
-    st.markdown("**💬 当前会话**")
-    thread_short = st.session_state["thread_id"][:8]
-    st.caption(f"Thread: `{thread_short}...`")
-    st.caption(f"第 {st.session_state['turn_count']} 轮")
-
-    if st.button("🔄 新对话", use_container_width=True, help="重置会话，清除对话历史"):
-        st.session_state["thread_id"] = str(uuid.uuid4())
-        st.session_state["conversation_history"] = []
-        st.session_state["turn_count"] = 0
-        st.session_state["last_result"] = None
-        st.session_state["last_query"] = ""
-        st.session_state["last_eval_results"] = None
+    st.toggle("使用真实 AKShare 数据", key="use_real_data")
+    set_use_real_data(st.session_state["use_real_data"])
+    st.caption(f"数据模式：{data_mode()}")
+    st.caption("没有 checkpoint 自动记忆；每轮显式传入最近三轮会话摘要。")
+    st.caption("摘要只在当前 Streamlit 会话内保留，刷新或服务重启后可能丢失。")
+    if st.button("🔄 新对话", width="stretch"):
+        st.session_state.update(conversation_history=[], last_result=None, execution_events=[],
+                                report_progress={}, debug_events=[], analysis_snapshots={}, turn_count=0)
         st.rerun()
+    st.caption(f"已完成 {st.session_state['turn_count']} 轮")
 
-    st.divider()
-    st.markdown("**关于本项目**")
-    st.markdown("""
-InvestAgent 演示 LangGraph 混合型 Agent：
-
-- **有向环①**：Reactive 工具调用循环
-- **有向环②**：Validator 重试路由
-- **MemorySaver**：多轮对话状态持久化
-- **条件边**：assess 节点动态路由
-- **AKShare**：真实 A 股市场数据
-
-**技术栈：** LangGraph · LangChain · Pydantic · AKShare
-    """)
-
-    st.divider()
-    with st.expander("📋 C1–C9 Spec 约束"):
-        st.markdown("""
-| 约束 | 内容 |
-|---|---|
-| C1 | 4个分析维度完整 |
-| C2 | 摘要 ≥ 100 字 |
-| C3 | 置信度 ∈ [0,1] |
-| C4 | 评级为 buy/hold/sell |
-| C5 | 来源 ≥ 3 个 |
-| C6 | 风险因素非空 |
-| C7 | 投资论点 ≥ 50 字 |
-| C8 | 路由模式合法 |
-| C9 | Reactive 回答非空 |
-        """)
-
-# ============================================================
-# 主页面
-# ============================================================
-
-st.title("📊 InvestAgent — 混合型智能投研助手")
-st.caption("LangGraph Hybrid Agent · Reactive + Deliberative · MemorySaver 多轮对话 · AKShare 市场数据")
-
-# ---- 对话历史面板 ----
+st.title("📊 InvestAgent · 投研工作台")
+st.caption("查询市场、比较表现，或生成一份行业研究报告。")
+st.info("这是一个投研助手，可以帮你查询行情、比较股票、分析历史表现和风险，也能生成行业研究报告。展开示例选择问题，或在下方直接输入需求，再点击「运行研究任务」。回答和图表可在结果页查看，生成的报告可在「报告中心」阅读和下载。目前支持基于最近三轮对话上下文进行连续追问，更长的多轮对话能力待后续开发。点击侧边栏「新对话」可清空当前会话，开启新一轮交流。")
 if st.session_state["conversation_history"]:
-    with st.expander(f"💬 对话历史（{len(st.session_state['conversation_history'])} 轮）", expanded=False):
-        for i, turn in enumerate(st.session_state["conversation_history"], 1):
-            mode_icon = "⚡" if turn["mode"] == "reactive" else "🔬"
-            rating = turn.get("rating", "")
-            rating_str = f" → {rating.upper()}" if rating else ""
-            st.markdown(f"**第{i}轮** {mode_icon} `{turn['mode']}`{rating_str}")
-            st.caption(f"Q: {turn['query'][:60]}{'...' if len(turn['query']) > 60 else ''}")
-            if turn.get("response_preview"):
-                st.caption(f"A: {turn['response_preview'][:80]}...")
-            st.divider()
+    with st.expander("对话历史与上下文"):
+        for turn in st.session_state["conversation_history"]:
+            st.write(f"问题：{turn['query']}")
+            st.write(f"摘要：{turn.get('response_preview', '')}")
+st.caption("点击示例只填入问题，确认内容后再运行。")
+with st.expander("试试这些问题", expanded=False):
+    cards=example_queries()
+    for offset in (0,3):
+        for col,card in zip(st.columns(3),cards[offset:offset+3]):
+            with col.container(border=True):
+                st.button(card['title'],key='example_'+card['id'],on_click=_fill_example,args=(card['id'],),width='stretch')
+                st.caption(card['hint'])
+with st.expander("更多测试场景", expanded=False):
+    st.caption("边界场景用于检查数据缺失提示。机会与风险解释为实验性：已知输出校验问题尚未解决。")
+    for col,card in zip(st.columns(3),BOUNDARY_EXAMPLES):
+        col.button(card['title'],key='example_'+card['id'],on_click=_fill_example,args=(card['id'],),width='stretch')
 
-# ---- 示例查询 ----
-st.markdown("**快速示例：**")
-col1, col2, col3, col4 = st.columns(4)
+user_query = st.text_area("您想研究什么？", key="query_input", height=110)
+run_btn = st.button("🚀 运行研究任务", type="primary", width="stretch")
 
-with col1:
-    if st.button("⚡ 简单查询", use_container_width=True):
-        st.session_state["query_input"] = "今天新能源板块行情如何？"
-
-with col2:
-    if st.button("🔬 深度研究", use_container_width=True):
-        st.session_state["query_input"] = "请深度分析新能源行业的中期投资机会"
-
-with col3:
-    if st.button("📈 行业分析", use_container_width=True):
-        st.session_state["query_input"] = "光伏行业当前是否具备投资价值？请给出详细分析"
-
-with col4:
-    # 追问按钮：只有在有历史时才有意义
-    followup_disabled = len(st.session_state["conversation_history"]) == 0
-    if st.button("↩️ 追问", use_container_width=True, disabled=followup_disabled,
-                 help="针对上一轮分析结果提问"):
-        st.session_state["query_input"] = "上述分析中，哪个风险因素最值得关注？请展开说明。"
-
-st.divider()
-
-# ---- 输入区 ----
-user_query = st.text_area(
-    "输入您的查询",
-    height=80,
-    placeholder="例如：请分析新能源行业的中期投资机会，重点关注光伏板块...",
-    key="query_input",
-)
-
-with st.expander("⚙️ 高级选项（可选）"):
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        research_topic = st.text_input("研究主题", placeholder="新能源行业")
-    with col_b:
-        industry_focus = st.text_input("行业焦点", placeholder="光伏")
-    with col_c:
-        time_horizon = st.selectbox("时间范围", ["中期", "短期", "长期"])
-
-run_btn = st.button("🚀 运行 InvestAgent", type="primary", use_container_width=True)
-
-# ============================================================
-# 运行 Agent — 使用 LangGraph stream() 实时展示每个节点进度
-# ============================================================
-
-# 节点名称 → UI 标签映射
-_NODE_LABELS = {
-    "assess":           "📍 [评估] 判断查询类型与复杂度",
-    "perception":       "📡 [感知] 市场数据分析师收集市场数据",
-    "modeling":         "🌍 [建模] 宏观经济学家构建市场模型",
-    "reasoning":        "💡 [推理] 策略研究员生成候选投资方案",
-    "decision":         "🎯 [决策] 投资委员会主席选择最优方案",
-    "report":           "📄 [报告] 撰写专家生成投研报告",
-    "validator":        "✅ [校验] 独立合规审查员检查报告",
-    "reactive_agent":   "⚡ [反应] 处理简单查询",
-    "tools":            "🔧 [工具] 调用 AKShare 市场数据",
-    "extract_response": "💬 [提取] 整理最终回答",
-}
-
+answer_tab, combined_tab, reader_tab = st.tabs(["回答", "数据与分析", "报告中心"])
+with combined_tab:
+    data_tab=st.container()
+    analysis_tab=st.container()
+with st.container(key="developer_debug"):
+    with st.expander("开发者调试", expanded=False):
+        st.caption("用于排查规划、专家执行和报告生成；不影响上方产品结果。")
+        planning_tab, experts_tab, report_tab = st.tabs(["任务规划与调度", "专家执行记录", "报告生成过程"])
+trace_tab=planning_tab
+planning_slot=planning_tab.empty()
+experts_slot=experts_tab.empty()
+# Independent placeholders keep streamed views replaceable and downloads unique.
+containers = [tab.empty() for tab in (answer_tab, data_tab, analysis_tab, report_tab, reader_tab)]
 
 if run_btn and user_query.strip():
     from src.agent import create_invest_agent
+    from src.parent_state import create_parent_state
 
-    # 兜底：运行前再同步一次数据模式，确保 stream() 期间工具读到的就是 toggle 的当前值
-    set_use_real_data(st.session_state["use_real_data"])
-
-    turn_num = st.session_state["turn_count"] + 1
-    thread_id = st.session_state["thread_id"]
-
-    # 构建初始 state（与 run_invest_agent 保持一致）
-    initial_state = {
-        "user_query": user_query.strip(),
-        "research_topic": research_topic or user_query.strip(),
-        "industry_focus": industry_focus or "",
-        "time_horizon": time_horizon,
-        "processing_mode": None,
-        "query_type": None,
-        "messages": [],
-        "final_response": None,
-        "perception_data": None,
-        "world_model": None,
-        "reasoning_plans": None,
-        "selected_plan": None,
-        "final_report": None,
-        "validation_errors": None,
-        "retry_count": 0,
-        "current_phase": "assess",
-        "error": None,
-    }
-    config = {"configurable": {"thread_id": thread_id}}
-
-    # 注入 LangFuse 追踪（配置了 LANGFUSE_* 才启用）
+    history = st.session_state["conversation_history"][-3:]
+    summary = "\n\n".join(f"用户：{turn['query'][:800]}\n回答摘要：{turn.get('response_preview', '')[:1200]}"
+                           for turn in history)
+    initial = create_parent_state(user_query, conversation_context=summary)
+    current, progress, events = dict(initial), {}, []
+    debug = []
+    snapshots = {}
+    render_seq = 0
+    active_task = None
+    active_category = None
+    config = {}
     try:
         from src.evaluation.langfuse_tracing import get_langfuse_handler
-        lf_handler = get_langfuse_handler()
-        if lf_handler:
-            config["callbacks"] = [lf_handler]
+        handler = get_langfuse_handler()
+        if handler:
+            config["callbacks"] = [handler]
     except Exception:
         pass
-
-    _mode_label = "真实 AKShare 数据" if data_mode() == "real" else "模拟 mock 数据"
-    with st.status(f"InvestAgent 运行中（第{turn_num}轮）· {_mode_label}...", expanded=True) as status:
-        try:
-            agent = create_invest_agent()
-            accumulated_state = dict(initial_state)
-
-            for chunk in agent.stream(initial_state, config=config):
-                node_name = list(chunk.keys())[0]
-                state_update = chunk[node_name]
-                accumulated_state.update(state_update)
-
-                label = _NODE_LABELS.get(node_name, f"执行节点: {node_name}")
-
-                # 为关键节点附加额外上下文
-                if node_name == "assess":
-                    mode = state_update.get("processing_mode", "")
-                    topic = state_update.get("research_topic", "")
-                    st.write(f"{label} → `{mode}` | 主题: {topic[:30]}")
-
-                elif node_name == "reasoning":
-                    plans = state_update.get("reasoning_plans", [])
-                    count = len(plans) if isinstance(plans, list) else "?"
-                    st.write(f"{label} → 生成 {count} 个候选方案")
-
-                elif node_name == "validator":
-                    errors = state_update.get("validation_errors", [])
-                    phase = state_update.get("current_phase", "")
-                    if not errors:
-                        st.write(f"{label} ✓ 全部通过")
-                    elif phase == "completed":
-                        warn_types = [e["type"] for e in errors]
-                        st.write(f"{label} ⚠️ 带质量警告完成: {warn_types}")
-                    else:
-                        retry = state_update.get("retry_count", 1)
-                        st.write(f"{label} 🔄 触发重试 #{retry}")
-
-                else:
-                    st.write(label)
-
-            # chunk 只含各节点的增量，messages 由 add_messages reducer 追加，dict.update 会覆盖成最后一批；
-            # 从 checkpointer 取 reducer 合并后的完整 state
-            final_state = {**accumulated_state, **agent.get_state(config).values}
-            status.update(label="✅ 运行完成", state="complete", expanded=False)
-
-        except Exception as e:
-            status.update(label=f"❌ 运行出错: {e}", state="error")
-            st.error(f"Agent 运行失败：{e}")
-            st.stop()
-
-    # 计算对话历史摘要
-    processing_mode = final_state.get("processing_mode", "unknown")
-    turn_record = {"query": user_query.strip(), "mode": processing_mode, "rating": "", "response_preview": ""}
-
-    if processing_mode == "reactive":
-        turn_record["response_preview"] = (final_state.get("final_response") or "")[:120]
-    elif final_state.get("final_report"):
-        try:
-            r = json.loads(final_state["final_report"])
-            turn_record["rating"] = r.get("overall_rating", "")
-            turn_record["response_preview"] = r.get("investment_thesis", "")[:120]
-        except Exception:
-            pass
-
-    # 持久化 → rerun（rerun 后展示块从 session_state 读取结果）
-    st.session_state["last_result"] = final_state
-    st.session_state["last_query"] = user_query.strip()
-    st.session_state["last_eval_results"] = None   # 新一轮运行清除旧评估
-    st.session_state["turn_count"] = turn_num
-    st.session_state["conversation_history"].append(turn_record)
+    with answer_tab:
+        status = st.status("研究任务运行中…", expanded=True)
+    try:
+        graph = create_invest_agent()
+        for namespace, mode, update in graph.stream(initial, config=config,
+                subgraphs=True, stream_mode=["updates", "custom"]):
+            if mode == "custom":
+                if update.get("event") == "planner_attempt":
+                    debug.append({"step": len(debug) + 1, "node": "planner_attempt", "task_id": None,
+                                  "category": None, "details": update,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
+                    _render_debug(current, debug)
+                if update.get("event") == "strategy_diagnostic":
+                    debug.append({"step": len(debug) + 1, "node": "strategy_diagnostic", "task_id": active_task,
+                                  "category": "investment_strategy", "details": update,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
+                    _render_debug(current, debug)
+                if update.get("event") == "analysis_artifacts":
+                    snapshots.setdefault(update["task_id"], {}).update(update["artifacts"])
+                if update.get("event") == "task_started":
+                    active_task, active_category = update["task_id"], update["category"]
+                    debug.append({"step": len(debug) + 1, "node": "task_started", "task_id": active_task,
+                                  "category": active_category, "details": update,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
+                continue
+            for node, values in update.items():
+                if not isinstance(values, dict):
+                    continue
+                # Only root updates enter the parent snapshot. Nested channels stay local.
+                if not namespace:
+                    current.update(values)
+                elif "task_results" in values:
+                    current["task_results"] = values["task_results"]
+                if namespace and active_task and active_category == "report":
+                    fields = {key: values[key] for key in _REPORT_FIELDS if key in values}
+                    if fields:
+                        progress.setdefault(active_task, {}).update(fields)
+                detail = _debug_details(values)
+                if detail:
+                    debug.append({"step": len(debug) + 1, "node": node,
+                                  "task_id": active_task if namespace else None,
+                                  "category": active_category if namespace else None,
+                                  "scope": "/".join(namespace) or "parent", "details": detail,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
+                events.append({"step": len(events) + 1, "node": node,
+                               "task_id": active_task or "", "scope": "/".join(namespace) or "parent"})
+            # Render each view in its own replaceable tab container.
+            old_tabs = (answer_tab, data_tab, analysis_tab, report_tab, reader_tab)
+            answer_tab, data_tab, analysis_tab, report_tab, reader_tab = [c.container() for c in containers]
+            render_seq += 1
+            _render_results(current, progress, snapshots, render_id=f"stream_{render_seq}")
+            answer_tab, data_tab, analysis_tab, report_tab, reader_tab = old_tabs
+            _render_debug(current, debug)
+            with status:
+                _render_tasks(current)
+        status.update(label="研究执行结束", state="error" if current.get("supervisor_status") == "failed"
+                      or current.get("planning_status") == "failed" else "complete", expanded=False)
+    except Exception:
+        current.update(final_response="运行异常，已保留本轮可用任务结果，请重试。", composition_status="failed")
+        status.update(label="研究执行异常", state="error")
+    st.session_state.update(last_result=current, report_progress=progress, execution_events=events, debug_events=debug, analysis_snapshots=snapshots,
+                            turn_count=st.session_state["turn_count"] + 1)
+    st.session_state["conversation_history"].append({"query": user_query.strip(),
+        "response_preview": (current.get("final_response") or "")[:1200],
+        "status": current.get("supervisor_status") or current.get("planning_status")})
     st.rerun()
-
-elif run_btn and not user_query.strip():
+elif run_btn:
     st.warning("请输入查询内容后再运行。")
 
-# ============================================================
-# 展示最新结果（从 session_state 读取，rerun 后依然可见）
-# ============================================================
-
-if st.session_state.get("last_result"):
-    from src.stages.reporter import validate_report
-
-    final_state = st.session_state["last_result"]
-    processing_mode = final_state.get("processing_mode", "unknown")
-
-    st.divider()
-    st.markdown(
-        f"**第 {st.session_state['turn_count']} 轮结果** · "
-        f"路由模式：`{processing_mode}` · "
-        f"Q: *{st.session_state.get('last_query', '')[:50]}*"
-    )
-
-    if processing_mode == "reactive":
-        st.subheader("⚡ 快速回答（Reactive 路径）")
-        final_response = final_state.get("final_response", "")
-        if final_response:
-            st.success(final_response)
-        else:
-            st.warning("未能获取回答，请重试。")
-
-        with st.expander("🔍 消息历史"):
-            for msg in final_state.get("messages", []):
-                role = type(msg).__name__
-                content = getattr(msg, "content", str(msg))
-                st.markdown(f"**{role}:** {content}")
-
-    else:
-        st.subheader("🔬 深度研究报告（Deliberative 路径）")
-
-        if final_state.get("error"):
-            st.warning(f"⚠️ {final_state['error']}")
-
-        # 5阶段进度
-        stage_names = ["感知", "建模", "推理", "决策", "报告"]
-        stage_keys = ["perception_data", "world_model", "reasoning_plans", "selected_plan", "final_report"]
-        cols = st.columns(5)
-        for col, name, key in zip(cols, stage_names, stage_keys):
-            with col:
-                (st.success if final_state.get(key) else st.error)(f"{'✓' if final_state.get(key) else '✗'} {name}")
-
-        st.divider()
-
-        if final_state.get("perception_data"):
-            with st.expander("📡 阶段1：感知数据"):
-                st.json(final_state["perception_data"])
-
-        if final_state.get("world_model"):
-            with st.expander("🌍 阶段2：市场内部模型"):
-                wm = final_state["world_model"]
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown(f"**市场状态：** {wm.get('market_state','N/A')}")
-                    st.markdown(f"**经济周期：** {wm.get('economic_cycle','N/A')}")
-                    st.markdown(f"**市场情绪：** {wm.get('market_sentiment','N/A')}")
-                with c2:
-                    for r in wm.get("risk_factors", []):
-                        st.markdown(f"- {r}")
-
-        if final_state.get("reasoning_plans"):
-            with st.expander("💡 阶段3：候选投资方案"):
-                for plan in (final_state["reasoning_plans"] if isinstance(final_state["reasoning_plans"], list) else []):
-                    st.markdown(f"**方案 {plan.get('plan_id','N/A')}** — 置信度：{plan.get('confidence_level','N/A')}")
-                    st.markdown(f"> {plan.get('hypothesis','')}")
-
-        if final_state.get("selected_plan"):
-            with st.expander("🎯 阶段4：投资决策"):
-                sp = final_state["selected_plan"]
-                st.markdown(f"**选定方案：** `{sp.get('selected_plan_id','N/A')}`")
-                st.info(sp.get("investment_thesis", ""))
-                st.markdown(f"**建议：** {sp.get('recommendation','N/A')} · **时间框架：** {sp.get('timeframe','N/A')}")
-
-        if final_state.get("final_report"):
-            st.subheader("📄 最终投研报告")
-            try:
-                report = json.loads(final_state["final_report"])
-                errors = validate_report(report)
-                if errors:
-                    st.warning(f"⚠️ {len(errors)} 个质量问题：{[e['type'] for e in errors]}")
-                else:
-                    st.success("✅ 报告通过 C1–C7 全部约束校验")
-
-                rating_color = {"buy": "🟢", "hold": "🟡", "sell": "🔴"}.get(report.get("overall_rating",""), "⚪")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("整体评级", f"{rating_color} {report.get('overall_rating','N/A').upper()}")
-                c2.metric("研究主题", report.get("research_topic","N/A"))
-                c3.metric("时间范围", report.get("time_horizon","N/A"))
-
-                for dim_name, dim_data in report.get("dimensions", {}).items():
-                    label = {"fundamental":"基本面","market":"市场面","news":"消息面","analyst":"分析师"}.get(dim_name, dim_name)
-                    conf = dim_data.get("confidence", 0)
-                    with st.expander(f"{label}（置信度 {conf:.0%}）"):
-                        st.write(dim_data.get("summary",""))
-
-                if report.get("risk_factors"):
-                    st.markdown("**⚠️ 风险因素：**")
-                    for r in report["risk_factors"]:
-                        st.markdown(f"- {r}")
-
-                if report.get("sources"):
-                    with st.expander("📚 数据来源"):
-                        for s in report["sources"]:
-                            st.markdown(f"- {s}")
-
-                with st.expander("🔧 原始 JSON 报告"):
-                    st.json(report)
-
-            except json.JSONDecodeError:
-                st.code(final_state["final_report"])
-
-        retry_count = final_state.get("retry_count", 0)
-        if retry_count > 0:
-            st.info(f"ℹ️ Validator 触发了 {retry_count} 次重试")
-
-    # ============================================================
-    # 评估面板（OpenEvals，点击后按需运行）
-    # ============================================================
-    if final_state.get("final_report"):
-        st.divider()
-        st.subheader("📊 质量评估（OpenEvals）")
-        st.caption("使用 Qwen 作为评判 LLM，评估报告的相关性、幻觉程度和投资论点质量")
-
-        eval_col1, eval_col2 = st.columns([1, 3])
-        with eval_col1:
-            run_eval_btn = st.button("▶ 运行评估", use_container_width=True,
-                                     help="需要 DASHSCOPE_API_KEY（约需10-20秒）")
-        with eval_col2:
-            if not os.getenv("DASHSCOPE_API_KEY"):
-                st.warning("需要 DASHSCOPE_API_KEY 才能运行评估")
-
-        if run_eval_btn:
-            from src.evaluation.openevals_eval import run_openevals
-
-            with st.spinner("OpenEvals 评估中（Qwen-as-judge）..."):
-                eval_results = run_openevals(final_state)
-                st.session_state["last_eval_results"] = eval_results
-
-        # 显示评估结果
-        if st.session_state.get("last_eval_results"):
-            er = st.session_state["last_eval_results"]
-            ec1, ec2, ec3 = st.columns(3)
-
-            def _score_display(result: dict, label: str, col):
-                score = result.get("score")
-                with col:
-                    if score is None:
-                        st.metric(label, "N/A")
-                        st.caption(result.get("reasoning", "")[:100])
-                    else:
-                        score_pct = f"{score:.0%}" if isinstance(score, float) else str(score)
-                        color = "🟢" if isinstance(score, float) and score >= 0.7 else (
-                            "🟡" if isinstance(score, float) and score >= 0.4 else "🔴"
-                        )
-                        st.metric(label, f"{color} {score_pct}")
-                        with st.expander("评审理由"):
-                            st.write(result.get("reasoning", ""))
-
-            _score_display(er.get("answer_relevance", {}), "回答相关性", ec1)
-            _score_display(er.get("hallucination", {}),    "幻觉程度↓", ec2)
-            _score_display(er.get("thesis_quality", {}),   "投资论点质量", ec3)
-
-            st.caption("注：幻觉程度分数越低越好（0=无幻觉，1=大量虚构）")
+state = st.session_state.get("last_result") or {}
+# Initial run renders here; streaming uses the same view functions.
+_render_results(state, st.session_state["report_progress"])
+with trace_tab:
+    _render_debug(state, st.session_state["debug_events"])
+    _render_tasks(state)
+    for key in ("planning_error", "supervisor_error", "composition_error"):
+        if state.get(key):
+            st.error(state[key]["message"])
+    if st.session_state["execution_events"]:
+        st.dataframe(st.session_state["execution_events"], hide_index=True, width="stretch")

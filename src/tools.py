@@ -13,8 +13,51 @@ AKShare 市场数据工具
 from __future__ import annotations
 
 import os
+from typing import Literal
+
+from langchain_core.runnables import RunnableConfig
 
 from langchain_core.tools import tool
+
+_SINA_FUNCTIONS = {"stock_zh_a_daily", "stock_zh_index_daily"}
+
+
+def _call_sina(function: str, **kwargs):
+    """Run JS-decoding providers in a fresh interpreter; native aborts cannot kill UI."""
+    import json
+    import subprocess
+    import sys
+    from io import StringIO
+    from pathlib import Path
+    import pandas as pd
+
+    if function not in _SINA_FUNCTIONS:
+        raise ValueError("unsupported isolated provider")
+    completed = subprocess.run(
+        [sys.executable, "-m", "src.tools"],
+        input=json.dumps({"function": function, "kwargs": kwargs}),
+        text=True, capture_output=True, timeout=60,
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"native provider exited ({completed.returncode})")
+    return pd.read_json(StringIO(completed.stdout), orient="records")
+
+
+def _sina_worker():
+    """Worker entry point. Never execute provider-controlled text as Python code."""
+    import contextlib
+    import json
+    import sys
+    payload = json.load(sys.stdin)
+    function = payload["function"]
+    if function not in _SINA_FUNCTIONS:
+        raise ValueError("unsupported isolated provider")
+    with contextlib.redirect_stdout(sys.stderr):
+        import akshare as ak
+        frame = getattr(ak, function)(**payload["kwargs"])
+    sys.stdout.write(frame.to_json(orient="records", date_format="iso"))
+
 
 # 环境变量名（单一真源，UI / 测试 / 工具层共用，避免各处硬编码字符串拼错）
 USE_REAL_DATA_ENV = "USE_REAL_DATA"
@@ -210,7 +253,7 @@ def _index_quote(ak: object, name: str, em_symbol: str, sina_symbol: str) -> str
 
     # 源2：新浪（只有 OHLC，涨跌幅自行算）
     try:
-        df = ak.stock_zh_index_daily(symbol=sina_symbol)
+        df = _call_sina("stock_zh_index_daily", symbol=sina_symbol)
         if df is not None and len(df) >= 2:
             last = float(df.iloc[-1]["close"])
             prev = float(df.iloc[-2]["close"])
@@ -453,6 +496,17 @@ _STOCK_NAME_TO_CODE = {
 def _resolve_stock_code(query: str) -> str | None:
     """从名称或代码中解析出股票代码"""
     query = query.strip()
+    if not query:
+        return None
+    # Recognize complete exchange-qualified codes; never strip arbitrary digits from text.
+    import re
+    qualified = re.fullmatch(r"(?:(SH|SZ)\.?([0-9]{6})|([0-9]{6})\.(SH|SZ))", query.upper())
+    if qualified:
+        exchange = qualified.group(1) or qualified.group(4)
+        code = qualified.group(2) or qualified.group(3)
+        if (exchange == "SH" and code.startswith("6")) or (exchange == "SZ" and code.startswith(("0", "3"))):
+            return code
+        return None
     # 已是代码格式
     if query.isdigit() and len(query) == 6:
         return query
@@ -507,7 +561,7 @@ def get_stock_performance(query: str) -> str:
         # 源2：新浪（英文列名），东财被断连时兜底
         if df is None or len(df) == 0:
             prefix = "sh" if code.startswith(("6", "9")) else "sz"
-            df = ak.stock_zh_a_daily(
+            df = _call_sina("stock_zh_a_daily",
                 symbol=f"{prefix}{code}", start_date=start, end_date=end, adjust="qfq"
             )
             cols = ("close", "high", "low", "volume")
@@ -550,3 +604,198 @@ INVEST_TOOLS = [
     search_stock_news,
     get_stock_performance,   # 新增：个股表现查询
 ]
+
+
+# Structured acquisition is separate from INVEST_TOOLS to preserve report inputs.
+@tool
+def get_price_history(query: str, start_date: str, end_date: str, config: RunnableConfig,
+                      asset_type: Literal["stock", "index"] = "stock",
+                      adjustment: Literal["none", "qfq", "hfq"] = "qfq") -> str:
+    """Fetch dated daily A-share prices or benchmark index history into a request dataset.
+
+    Use for historical/quantitative requests, not just the latest price.
+    Dates must be YYYY-MM-DD. Stock query accepts a name or six-digit code;
+    index query requires a six-digit index code and adjustment='none'.
+    Returns metadata/reference and endpoint observations, never the full table.
+    DatasetStore is injected by application config, not supplied by the model.
+    """
+    import json
+    from datetime import date, datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+    from src.datasets import DatasetStore, PriceDataset
+
+    def unavailable(kind, message):
+        return json.dumps({"status": "unavailable", "error": {"type": kind, "message": message}}, ensure_ascii=False)
+
+    store = (config.get("configurable") or {}).get("dataset_store")
+    if not isinstance(store, DatasetStore):
+        return unavailable("missing_store", "请求内数据存储未配置，不能返回有效数据集引用。")
+    try:
+        start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        if start > end or (end - start).days > 3660 or end > datetime.now(ZoneInfo("Asia/Shanghai")).date():
+            return unavailable("invalid_range", "日期须为有效历史区间，单次最长3660天。")
+        code = _resolve_stock_code(query) if asset_type == "stock" else query.strip()
+        if not code or len(code) != 6 or not code.isdigit():
+            return unavailable("invalid_symbol", "仅支持六位 A 股或指数代码，请明确查询对象。")
+        if asset_type == "index" and adjustment != "none":
+            return unavailable("invalid_adjustment", "指数历史行情请使用 adjustment=none。")
+        if asset_type == "stock" and not code.startswith(("0", "3", "6")):
+            return unavailable("unsupported_market", "首版仅支持沪深 A 股。")
+        real = _should_use_real_data()
+        if real:
+            import akshare as ak
+            provider = "akshare/eastmoney"
+            if asset_type == "stock":
+                try:
+                    df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
+                        end_date=end.strftime("%Y%m%d"), adjust="" if adjustment == "none" else adjustment)
+                except Exception:
+                    df = None
+                if df is None or df.empty:
+                    prefix = "sh" if code.startswith("6") else "sz"
+                    df = _call_sina("stock_zh_a_daily", symbol=prefix + code, start_date=start.strftime("%Y%m%d"),
+                        end_date=end.strftime("%Y%m%d"), adjust="" if adjustment == "none" else adjustment)
+                    provider = "akshare/sina"
+                    if df is not None:
+                        df = df.rename(columns={"date": "日期", "close": "收盘", "open": "开盘",
+                            "high": "最高", "low": "最低", "volume": "成交量"})
+            else:
+                try:
+                    df = ak.index_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
+                                           end_date=end.strftime("%Y%m%d"))
+                except Exception:
+                    df = None
+                if df is None or df.empty:
+                    # Restrict fallback to known market identifiers rather than guessing.
+                    sina_code = next((item[2] for item in _INDEXES if item[1] == code), None)
+                    if sina_code is None:
+                        return unavailable("index_source_unavailable", "指数主源不可用，尚未配置该指数备用市场代码。")
+                    df = _call_sina("stock_zh_index_daily", symbol=sina_code)
+                    provider = "akshare/sina"
+                    if df is not None and not df.empty:
+                        df = df.rename(columns={"date": "日期", "close": "收盘", "open": "开盘",
+                            "high": "最高", "low": "最低"}).copy()
+                        dates = pd.to_datetime(df["日期"], errors="raise").dt.date
+                        df = df.loc[(dates >= start) & (dates <= end)]
+        else:
+            days = pd.bdate_range(start, end)
+            df = pd.DataFrame({"日期": days, "收盘": [100. + i * .1 for i in range(len(days))]})
+            provider = "synthetic_demo"
+        if df is None or df.empty:
+            return unavailable("no_data", "指定区间无可用交易数据。")
+        rows = []
+        has_volume = asset_type == "stock" and "成交量" in df.columns
+        for _, raw in df.iterrows():
+            observed = pd.to_datetime(raw["日期"], errors="raise").date()
+            if not start <= observed <= end:
+                raise ValueError("provider date outside requested range")
+            row = {"date": observed, "close": float(raw["收盘"])}
+            for column, key in (("开盘", "open"), ("最高", "high"), ("最低", "low")):
+                if column in df.columns:
+                    row[key] = None if pd.isna(raw[column]) else float(raw[column])
+            if has_volume:
+                # stock_zh_a_hist documented volume is lots (手), normalize to shares.
+                row["volume"] = None if pd.isna(raw["成交量"]) else float(raw["成交量"]) * (1 if provider == "akshare/sina" else 100)
+            rows.append(row)
+        dataset = PriceDataset(kind="price_history", symbol=code,
+            market=("SSE" if code.startswith("6") else "SZSE") if asset_type == "stock" else "CN_INDEX",
+            asset_type=asset_type, currency="CNY", frequency="daily", adjustment=adjustment,
+            price_unit="CNY/share" if asset_type == "stock" else "points",
+            volume_unit="shares" if has_volume else "not_available", provider=provider,
+            source_url=("https://finance.sina.com.cn/" if provider == "akshare/sina" else "https://quote.eastmoney.com/") if real else None,
+            retrieved_at=datetime.now(timezone.utc), data_mode="real" if real else "mock", rows=rows)
+        ref = store.put(dataset)
+        return json.dumps({"status": "available", "dataset_ref": ref.model_dump(mode="json"),
+            "first_close": rows[0]["close"], "last_close": rows[-1]["close"],
+            "limitations": ["模拟工作日序列，不反映交易所节假日或真实行情"] if not real else []}, ensure_ascii=False)
+    except Exception as exc:
+        return unavailable("history_unavailable", f"历史行情获取或数据验证失败（{type(exc).__name__}）；未注册数据集，请稍后重试。")
+
+
+@tool
+def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str | None = None) -> str:
+    """Fetch an A-share valuation snapshot on the latest available date <= as_of_date.
+
+    Date is YYYY-MM-DD, defaults to today's Shanghai date. Uses PE TTM and PB MRQ,
+    never substitutes static PE. Dividend yield is explicitly unavailable in this source.
+    Registers a dated ValuationDataset and returns its canonical reference and metrics.
+    Historical source observations are not guaranteed point-in-time financial records.
+    """
+    import json
+    import math
+    from datetime import date, datetime, timezone
+    from zoneinfo import ZoneInfo
+    import pandas as pd
+    from src.datasets import DatasetStore, ValuationDataset
+
+    def unavailable(kind, message):
+        return json.dumps({"status": "unavailable", "error": {"type": kind, "message": message}}, ensure_ascii=False)
+
+    store = (config.get("configurable") or {}).get("dataset_store")
+    if not isinstance(store, DatasetStore):
+        return unavailable("missing_store", "请求内数据存储未配置。")
+    try:
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        requested = date.fromisoformat(as_of_date) if as_of_date is not None else today
+        if requested > today:
+            return unavailable("invalid_date", "不支持未来日期估值。")
+        code = _resolve_stock_code(query)
+        if not code or len(code) != 6 or not code.startswith(("0", "3", "6")):
+            return unavailable("invalid_symbol", "首版仅支持沪深 A 股名称或六位代码。")
+        real = _should_use_real_data()
+        if real:
+            import akshare as ak
+            frame = ak.stock_value_em(symbol=code)
+            if frame is None or frame.empty:
+                return unavailable("no_data", "无可用估值数据。")
+            frame = frame.copy()
+            frame["数据日期"] = pd.to_datetime(frame["数据日期"], errors="raise").dt.date
+            eligible = frame[frame["数据日期"] <= requested]
+            if eligible.empty:
+                return unavailable("no_data", "指定日期及之前无估值观察值。")
+            actual = eligible["数据日期"].max()
+            latest = eligible[eligible["数据日期"] == actual]
+            if len(latest) != 1:
+                return unavailable("ambiguous_data", "同一观察日期有重复估值记录。")
+            raw = latest.iloc[0]
+        else:
+            actual = requested
+            raw = {"PE(TTM)": 20., "市净率": 2.}
+        values = {}
+        for name, column, basis in (("pe_ttm", "PE(TTM)", "PE_TTM"), ("pb", "市净率", "PB_MRQ")):
+            source = raw.get(column)
+            if source is None or pd.isna(source) or str(source).strip() in {"", "-", "--"}:
+                value, reason = None, f"供应商未提供{column}，不以其他口径代替"
+            else:
+                value, reason = float(source), None
+                if not math.isfinite(value):
+                    raise ValueError("nonfinite valuation")
+            values[name] = {"value": value, "unit": "multiple", "basis": basis, "missing_reason": reason}
+        values["dividend_yield"] = {"value": None, "unit": "percent", "basis": None,
+            "missing_reason": "该来源不提供有明确口径的个股股息率"}
+        if all(values[name]["value"] is None for name in ("pe_ttm", "pb")):
+            return unavailable("no_metrics", "无可用 PE TTM 或 PB MRQ，不注册空快照。")
+        dataset = ValuationDataset(kind="valuation_snapshot", symbol=code,
+            market="SSE" if code.startswith("6") else "SZSE", currency="CNY",
+            provider="akshare/eastmoney/stock_value_em" if real else "synthetic_demo",
+            source_url=f"https://data.eastmoney.com/gzfx/detail/{code}.html" if real else None,
+            retrieved_at=datetime.now(timezone.utc), data_mode="real" if real else "mock",
+            as_of_date=actual, available_at=None, report_period=None, metrics=values)
+        ref = store.put(dataset)
+        limitations = ["股息率缺失，未推断公告日期/报告期，不能用于无前视偏差历史回测。",
+                       "非正PE/PB不适用于相对估值排名；不同指标口径不可混用。"]
+        if actual != requested:
+            limitations.append(f"请求日期{requested}，实际观察日期{actual}；未假定为当天估值。")
+        if not real:
+            limitations.append("模拟数据，不代表真实估值。")
+        return json.dumps({"status": "available", "dataset_ref": ref.model_dump(mode="json"),
+            "requested_date": requested.isoformat(), "metrics": dataset.model_dump(mode="json")["metrics"],
+            "limitations": limitations}, ensure_ascii=False, allow_nan=False)
+    except Exception:
+        return unavailable("valuation_unavailable", "估值获取或验证失败，未注册数据集，请稍后重试。")
+
+
+if __name__ == "__main__":
+    _sina_worker()

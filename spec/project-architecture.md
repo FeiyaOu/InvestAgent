@@ -1,435 +1,161 @@
-# InvestAgent — 项目架构文档
+# InvestAgent — 当前项目架构
 
-> 本文档是项目的架构权威来源。所有实现决策、技术选型、功能边界均以此为准。
-> 修改架构前必须先更新本文档。
+> 架构权威文档。2026-11-10：公共入口与 Streamlit 已完成父图迁移。
+> 历史设计及分步决策见 [工作流演进规格](workflow-evolution.md)，最新迁移见第 16 节。
 
----
+## 1. 请求级父图
 
-## 1. 项目定位
-
-**项目名称：** InvestAgent — 混合型智能投研助手
-
-**一句话描述：**
-
-> 输入研究主题（如"新能源行业"），Agent 自动判断查询复杂度：简单问题走 Reactive 路径调用 AKShare 工具快速回答；复杂研究走 Deliberative 路径，由5个专家角色依次完成感知→建模→推理→决策→报告，最终生成结构化投研报告，全程由 Pydantic 约束保护，LangFuse 追踪每个阶段的 LLM 调用。
-
-**与 PolicyPilot-RAG 的关系：**
-
-- PolicyPilot-RAG = 解决「RAG 检索质量」问题（文档 → 召回 → 生成）
-- InvestAgent = 解决「Agent 自主规划」问题（感知 → 推理 → 决策）
-- 两个项目互补，PolicyPilot 的 hybrid retrieval 可以被封装成 InvestAgent 的一个 `@tool`
-
----
-
-## 2. 核心架构
-
-### 2.1 LangGraph Graph 结构
-
-```
-用户输入（研究主题 / 简单问题）
-        ↓
-   [assess] ── LLM 判断 processing_mode
-        ↓
-   ┌────┴────┐
-reactive   deliberative
-   ↓              ↓
-[reactive_agent]  [perception]  ← AKShare 工具调用
-    ↕ 有向环①         ↓
-[tools(AKShare)]  [modeling]
-    ↓              ↓
-[extract_resp]  [reasoning]    ← 生成3个候选方案
-    ↓              ↓
-   END          [decision]     ← 选择最优方案
-                   ↓
-                [report]       ← 生成结构化报告
-                   ↓
-               [validator]     ← 校验 C1–C7（报告结构约束）
-                ↕ 有向环②
-                   ↓（不合格 → 回到 decision，最多重试2次）
-                  END
+```text
+src/agent.py 公共门面 → create_parent_graph()
+START → initialize → planner → supervisor → composer → END
+             │           └─ 澄清/失败 ────────┘
+             └─ 无效输入 ────────────────────┘
 ```
 
-### 2.2 两个有向环
+Planner 产生四类任务和依赖。Supervisor 是确定性顺序调度图，不额外调用 LLM：
 
-| 有向环 | 节点路径 | 实现机制 | LangChain LCEL 能做吗 |
-|---|---|---|---|
-| 环① | `reactive_agent → tools → reactive_agent` | `add_messages` reducer + `should_continue_tools` 条件路由 | ❌ LCEL 是 DAG |
-| 环② | `validator → decision → report → validator` | state 中 `validation_passed` 字段 + 条件边，`retry_count` 防无限循环 | ❌ LCEL 是 DAG |
-
-### 2.3 为什么必须用 LangGraph（不是 LangChain）
-
-| 需求 | LangChain LCEL | LangGraph |
+| 类别 | 实现 | 当前状态 |
 |---|---|---|
-| 有向环（工具调用循环、validator 重试）| ❌ DAG，禁止环路 | ✅ 原生支持 |
-| `add_messages` 追加语义 | ❌ 总是覆盖赋值 | ✅ Reducer 声明在 TypedDict 里 |
-| 图结构级别条件路由（可视化、可追踪）| ❌ `RunnableBranch` 是代码 if-else | ✅ `add_conditional_edges`，Mermaid 可画 |
-| 两条异构路径共享同一 State | ❌ 需要手动传参 | ✅ 所有节点共享 `InvestAgentState` |
+| market_data | src/market_data_agent.py | 已接入，工具循环与输出验证 |
+| analytics | src/analytics_agent.py | 已接入调度、分析汇总与 Plotly 看板 |
+| investment_strategy | src/strategy_agent.py | V1已接入：证据解释、约束与静态压力测试 |
+| report | src/report_graph.py | 已接入，原六节点流程 |
 
----
+独立任务依次执行；依赖任务等待前置结果。partial 可传递可用证据，失败依赖阻断下游。
+已完成任务结果先供 UI 展示，再由 Composer 汇总；不进行无界重试或动态重新规划。
 
-## 3. State 设计
+## 2. 状态边界
+
+- ParentState：输入、计划、各阶段状态/错误、按 task_id 分组的 TaskResult、最终回答。
+- SupervisorState：局部调度状态，last_task_id 不进入父级。
+- MarketDataState：局部 messages、工具预算、证据与结果，不充当用户对话历史。
+- InvestAgentState：原报告局部状态，四阶段数据、final_report、validator 重试字段保持兼容。
+- 子图通过显式适配输入和结果；父级只接回 task_results、supervisor_status、supervisor_error。
+- TaskResult 约束终止状态、结果与错误的一致性；领域内容仍由各自模型和 validate_report() 验证。
+
+当前不启用 checkpoint。每请求重新初始化，Streamlit 显式传入最近三轮文本摘要。
+refresh / 重启可能丢失会话；thread_id 不再是公开 API 参数，也不代表自动记忆。
+未来数据库、多轮恢复和并行 reducer 需要独立设计。
+
+## 3. 报告子图与数据层
+
+```text
+perception → modeling → reasoning → decision → report → validator
+                                      ↑                   │
+                                      └─ 现有重试条件 ─────┘
+```
+
+节点函数、prompt、工具调用、输出格式与实际校验重试行为保持不变。
+校验只通过 validate_report()；C1–C7 见 [主规格](invest_spec.md)。
+工具 fallback 和模拟标记保留。AKShare 只在 src/tools.py 调用。
+Market Data 复用五个现有工具，不自动提供尚未实现的结构化历史/财务分析能力。
+报告参数缺失时当前适配仍用完整任务描述，准确抽取主题/行业/时间是待完善事项。
+
+## 4. 展示和可观测性
+
+Streamlit 直接调用父图，无独立 HTTP 后端。
+通过 updates + custom / subgraphs=True 消费事件，task_started 标识子图所属任务。
+只将根事件合并到父级快照，任务结果与报告进度单独展示；不调用 get_state()。
+页面显示任务列表、数据证据、分析状态、每个报告的四节点输出和执行记录。
+最终报告正文/下载/评估仍隐藏；后续阅读视图使用 Streamlit + Plotly（见演进规格第 7 节）。
+LangFuse 回调可选，未配置时不影响运行；追踪不等于会话持久化。
+
+## 5. 入口与验证
 
 ```python
-class InvestAgentState(TypedDict):
-    # 输入
-    user_query: str
-    research_topic: str
-    industry_focus: str
-    time_horizon: str
-
-    # Reactive 路径
-    query_type: Optional[Literal["simple", "analytical"]]
-    processing_mode: Optional[Literal["reactive", "deliberative"]]
-    messages: Annotated[List[BaseMessage], add_messages]   # 工具调用历史，追加语义
-
-    # Deliberative 路径 — 5阶段累积
-    perception_data: Optional[dict]     # 阶段1写入
-    world_model: Optional[dict]         # 阶段2写入，读阶段1
-    reasoning_plans: Optional[list]     # 阶段3写入（3个候选方案），读阶段1+2
-    selected_plan: Optional[dict]       # 阶段4写入，读阶段1+2+3
-    final_report: Optional[str]         # 阶段5写入，读全部
-
-    # 质量控制
-    validation_errors: Optional[list]   # validator 节点写入
-    retry_count: int                    # 防止无限循环，最多重试2次
-
-    # 控制流
-    current_phase: str
-    error: Optional[str]
+from src.agent import run_invest_agent
+state = run_invest_agent("茅台最新价格？", conversation_context="")
+print(state["final_response"])
 ```
 
-**关键设计说明：**
-- `messages` 使用 `add_messages` reducer，是 LangGraph 专有语义，每次节点更新都追加而非覆盖，这是工具调用环路能工作的基础
-- `perception_data` 等字段是普通赋值（每阶段只写一次），`messages` 是例外
-- `retry_count` 防止 validator 环②无限循环，上限为2次
+不再提供 assess/reactive 编排；run_invest_agent 的旧 thread_id 和全局报告参数已移除。
+显式按任务 ID 的 report_parameters 和 RunnableConfig 为可选输入。
+create_response_graph() 保留为已有计划的执行/汇总组件，不作为另一条旧 Reactive 入口。
+C8 为四类任务与有效计划，C9 为非空用户响应；结构 lint 检查 TaskCategory。
 
----
-
-## 4. 角色 Persona 设计（Hat System）
-
-每个 Deliberative 阶段节点都有明确的专家角色，通过 system prompt 传入：
-
-| 节点 | 角色 | System Prompt 要点 |
-|---|---|---|
-| `perception` | 市场数据分析师 | 专注多维度数据收集，调用工具获取真实数据，不做主观判断 |
-| `modeling` | 宏观经济学家 | 从感知数据构建市场内部模型，识别周期位置和结构性变化 |
-| `reasoning` | 策略研究员 | 生成3个有明显差异的投资假设，每个标注置信度和优缺点 |
-| `decision` | 投资委员会主席 | 评估3个方案，选择最优，给出可追溯的 investment_thesis |
-| `report` | 资深研究报告撰写专家 | 生成结构化 JSON 报告，语言专业，有数据支撑，格式严格遵循 Spec |
-| `validator` | 独立合规审查员 | 不知道其他节点的决策过程，独立校验报告是否满足 C1–C7（C8–C9 由 test_agent.py 覆盖）|
-
----
-
-## 5. Spec 约束 C1–C9
-
-`spec/invest_spec.md` 是项目的"一等公民"。每条约束直接映射到一个测试类。
-
-混合型架构有两条路径，约束按适用范围分组：
-
-**Deliberative 路径专属（校验最终 JSON 报告，在 `validate_report()` 中执行）：**
-
-| 编号 | 约束内容 | 对应测试类 |
-|---|---|---|
-| C1 | 报告必须包含全部4个 dimensions：fundamental / market / news / analyst | `TestC1DimensionCompleteness` |
-| C2 | 每个 `dimension.summary` 不少于100字符 | `TestC2SummaryLength` |
-| C3 | 每个 `dimension.confidence` 在 [0.0, 1.0] 闭区间内 | `TestC3ConfidenceRange` |
-| C4 | `overall_rating` 只能是 `buy` / `hold` / `sell` 之一 | `TestC4RatingValidValue` |
-| C5 | `sources` 列表不少于3项 | `TestC5SourceCount` |
-| C6 | `risk_factors` 列表不能为空 | `TestC6RiskFactors` |
-| C7 | `investment_thesis` 不少于50字符（深思熟虑型的核心产出）| `TestC7InvestmentThesis` |
-
-**两条路径均适用（校验路由行为和各路径输出完整性）：**
-
-| 编号 | 约束内容 | 适用路径 | 对应测试类 |
-|---|---|---|---|
-| C8 | `processing_mode` 必须是 `reactive` 或 `deliberative`，不允许其他值 | 两条路径 | `TestC8RoutingValidValue` |
-| C9 | `processing_mode == reactive` 时，`final_response` 必须是非空字符串 | Reactive only | `TestC9ReactiveResponse` |
-
-**测试类分布：**
-- `tests/test_reporter.py`：C1–C7（deliberative 路径的 `validate_report()` 逐条校验）
-- `tests/test_agent.py`：C8–C9（路由行为和 reactive 输出完整性）
-
-**最终报告 JSON 格式：**
-
-```json
-{
-  "research_topic": "新能源行业",
-  "industry_focus": "光伏",
-  "time_horizon": "中期",
-  "report_date": "2026-07-07",
-  "dimensions": {
-    "fundamental": { "summary": "...(>=100字)", "confidence": 0.85 },
-    "market":      { "summary": "...(>=100字)", "confidence": 0.78 },
-    "news":        { "summary": "...(>=100字)", "confidence": 0.72 },
-    "analyst":     { "summary": "...(>=100字)", "confidence": 0.80 }
-  },
-  "investment_thesis": "选定的核心投资逻辑...(>=50字)",
-  "supporting_evidence": ["证据1", "证据2", "证据3"],
-  "overall_rating": "buy",
-  "risk_factors": ["风险1", "风险2"],
-  "sources": ["url1", "url2", "url3"]
-}
-```
-
----
-
-## 6. 数据层设计
-
-### 6.1 AKShare 使用范围
-
-AKShare 是免费、无需 API key 的 A 股数据库，**只放在 Tools 层**：
-
-```
-AKShare 调用范围：
-  ✅ reactive 路径的 @tool 函数（工具调用环路内）
-  ✅ deliberative 路径的 perception 阶段（调用同一套工具）
-  ❌ modeling / reasoning / decision / report（纯 LLM 推理，不需要外部数据）
-```
-
-数据收集与分析推理分离，是正确的分层设计。如需替换数据源（如接入 Wind、Tushare），只需修改 `src/tools.py`，Agent 架构不变。
-
-### 6.2 工具函数清单
-
-| 函数 | AKShare 接口 | 返回数据 |
-|---|---|---|
-| `get_sector_performance(sector)` | `stock_board_industry_summary_ths()` | 行业涨跌幅、成交额、主力净流入 |
-| `get_index_performance()` | `index_zh_a_hist()` | 主要指数近期行情 |
-| `get_macro_indicators()` | `macro_china_pmi_yearly()` | PMI、GDP 等宏观数据 |
-| `search_stock_news(keyword)` | `stock_news_em()` | 相关市场新闻 |
-
-### 6.3 Fallback 与开关策略
-
-```python
-USE_REAL_DATA = os.getenv("USE_REAL_DATA", "true").lower() == "true"
-
-@tool
-def get_sector_performance(sector: str) -> str:
-    if not USE_REAL_DATA:
-        return f"{sector} 板块模拟数据：涨跌幅 +2.3%，成交额 1200亿"
-    try:
-        # 真实 AKShare 调用
-        ...
-    except Exception as e:
-        # 网络异常时不崩溃，让 Agent 继续基于已有信息推理
-        return f"{sector} 数据暂时无法获取（{type(e).__name__}），请基于已有信息分析。"
-```
-
-**三种运行模式：**
-- `USE_REAL_DATA=true`（默认）：调用真实 AKShare
-- `USE_REAL_DATA=false`：返回预设 mock 数据（面试现场网络不稳时备用）
-- 测试层：`monkeypatch` mock AKShare，保持单元测试零网络依赖
-
----
-
-## 7. 外部依赖清单
-
-| 依赖 | 用途 | 是否必须 | 费用 | 获取方式 |
-|---|---|---|---|---|
-| `DASHSCOPE_API_KEY` | Qwen LLM，驱动全部节点 | ✅ 必须 | 按 token 计费 | DashScope 控制台 |
-| AKShare | 真实市场数据 | ⚠️ 可选（有 fallback）| 免费 | `pip install akshare`，无需 key |
-| `LANGFUSE_*` | LLM 调用追踪 | ⚠️ 可选 | 免费 hobby tier | cloud.langfuse.com |
-| `LANGSMITH_API_KEY` | 评估数据集管理 | ⚠️ 可选 | 免费 tier | smith.langchain.com |
-
-**零数据库依赖：** 报告存为 `runtime/reports/YYYY-MM-DD_topic.json`，无需 RDS 或任何持久化服务。
-
----
-
-## 8. 项目文件结构
-
-```
-InvestAgent/
-├── AGENTS.md                           # ~50行，AI agent 导航入口（给 AI 和开发者看的地图）
-├── pyproject.toml                      # pytest + ruff 配置
-├── requirements.txt                    # langgraph, langchain, akshare, pydantic, dashscope
-├── requirements-dev.txt                # pytest, pytest-mock, ruff
-├── .env.example                        # 环境变量模板
-├── .github/
-│   └── workflows/
-│       └── quality_gate.yml            # 三道门 CI：structure-lint → unit → integration
-├── linters/
-│   └── check_agent_structure.py        # ast检查：validate_report存在、REQUIRED_DIMENSIONS常量、stage节点
-├── spec/
-│   ├── project-architecture.md         # 本文档
-│   └── invest_spec.md                  # 一等公民，C1–C9 完整约束 + 报告格式定义
-├── src/
-│   ├── __init__.py
-│   ├── schemas.py                      # Pydantic models（5阶段输出 + FinalReport）
-│   ├── tools.py                        # @tool 函数（AKShare 封装 + fallback + USE_REAL_DATA 开关）
-│   ├── stages/
-│   │   ├── __init__.py
-│   │   ├── perception.py               # 阶段1：市场数据分析师角色
-│   │   ├── modeling.py                 # 阶段2：宏观经济学家角色
-│   │   ├── reasoning.py                # 阶段3：策略研究员角色（生成3个候选方案）
-│   │   ├── decision.py                 # 阶段4：投资委员会主席角色
-│   │   ├── reporter.py                 # 阶段5：报告撰写 + validate_report()（唯一校验入口）
-│   │   └── validator.py                # 环②触发节点：校验不合格时路由回 decision
-│   └── agent.py                        # LangGraph StateGraph 连线（全部节点 + 路由函数）
-├── app/
-│   └── streamlit_app.py                # Streamlit UI（输入 + 实时阶段进度 + 报告展示）
-├── runtime/
-│   └── reports/                        # 生成的 JSON 报告（无需数据库）
-└── tests/
-    ├── __init__.py
-    ├── conftest.py                     # make_valid_report工厂、AKShare mock、API key 隔离 fixture
-    ├── test_schemas.py                 # Pydantic 模型边界测试
-    ├── test_reporter.py                # TestC1–TestC7（报告结构约束）
-    ├── test_tools.py                   # 工具函数测试（mock AKShare，零网络依赖）
-    ├── test_stages.py                  # 每个阶段函数单元测试（mock LLM 返回）
-    ├── test_agent.py                   # graph 路由测试（reactive/deliberative 路径选择正确性）
-    └── test_integration.py             # @pytest.mark.integration，需真实 DASHSCOPE_API_KEY
-```
-
----
-
-## 9. 测试策略
-
-| 测试层 | 覆盖内容 | 隔离方式 |
-|---|---|---|
-| 单元测试 | `validate_report` C1–C7 逐条（test_reporter.py）、C8–C9 路由（test_agent.py）、Pydantic 模型边界、工具函数 fallback | `monkeypatch` 删除 API key env，mock AKShare |
-| 路由测试 | `assess` 节点正确路由 reactive/deliberative，`validator` 节点正确触发重试 | mock LLM 返回固定 `processing_mode` 和固定报告 |
-| 集成测试 | 完整5阶段流程 + 报告通过 C1–C7 校验 + 路由 C8–C9 验证 | `@pytest.mark.integration`，需真实 `DASHSCOPE_API_KEY` |
-
-**测试命令：**
-```bash
-pytest tests/ -q                          # 全部单元测试
-pytest tests/test_reporter.py -v          # 只跑 spec 约束测试
-pytest tests/ -m integration              # 集成测试（需 API Key）
-python linters/check_agent_structure.py   # 结构 lint 检查
-```
-
----
-
-## 10. 质量门（CI 三道门）
-
-```
-门1: structure-lint    python linters/check_agent_structure.py
-        ↓ 通过
-门2: unit-tests        pytest tests/ -m "not integration"
-        ↓ 通过（仅 main 分支）
-门3: integration-tests pytest tests/ -m integration
-```
-
-参考 `AI赋能的智能测试与质量保证/stock-research/.github/workflows/quality_gate.yml`。
-
----
-
-## 11. 评估层（Phase 9，主体功能完成后加入）
-
-| 工具 | 用途 | 评估目标 |
-|---|---|---|
-| **LangFuse** `@observe` | 追踪每阶段 LLM 调用延迟、token 消耗、输入输出 | 全部5个阶段节点 |
-| **LangSmith** | 管理测试数据集、批量运行、不同版本对比 | 端到端 |
-| **OpenEvals** `ANSWER_RELEVANCE` | 报告是否切题 | `final_report` |
-| **OpenEvals** `HALLUCINATION` | 报告是否超出感知数据的信息边界 | `context=perception_data, output=final_report` |
-| **DeepEval** `GEval` | 自定义指标评估 `investment_thesis` 质量（对应 C7）| `selected_plan.investment_thesis` |
-
-**注意：** RAG 专属 OpenEvals（`RAG_GROUNDEDNESS`, `RAG_RETRIEVAL_RELEVANCE`）不适用于 InvestAgent，留给 PolicyPilot-RAG 使用。
-
----
-
-## 12. 部署方案
-
-| 方案 | 场景 | 成本 |
-|---|---|---|
-| 本地 `streamlit run app/streamlit_app.py` | 面试现场演示 | 0 |
-| Streamlit Community Cloud | 分享公开链接给面试官 | 0（免费 tier）|
-| ECS / RDS | **不需要** | — |
-
----
-
-## 13. 实施顺序
-
-| 阶段 | 任务 | 核心输出文件 | 主要复用来源 |
-|---|---|---|---|
-| 1 | SDD：写 spec 约束文档 | `spec/invest_spec.md` | stock-research/spec/research_spec.md 结构 |
-| 2 | 脚手架：目录、配置文件 | `AGENTS.md`, `pyproject.toml`, `requirements*.txt`, `.env.example` | stock-research 同名文件 |
-| 3 | Pydantic schemas | `src/schemas.py` | deliberative_research_langgraph.py 里5个 BaseModel |
-| 4 | **TDD 锚点**：validate_report + C1–C7 测试 | `src/stages/reporter.py`, `tests/test_reporter.py`, `tests/conftest.py` | stock-research/src/reporter.py + tests/conftest.py |
-| 5 | AKShare 工具层 + 测试 | `src/tools.py`, `tests/test_tools.py` | hybrid_wealth_advisor_langgraph.py @tool 结构 |
-| 6 | 5个阶段函数 + 角色 persona | `src/stages/perception.py` … `reporter.py` | deliberative_research_langgraph.py 5个函数 + prompt 模板 |
-| 7 | LangGraph 连线 + validator 节点 + 路由测试 | `src/agent.py`, `src/stages/validator.py`, `tests/test_agent.py` | hybrid_wealth_advisor_langgraph.py StateGraph 结构 |
-| 8 | Linter + CI + Streamlit UI | `linters/`, `.github/workflows/`, `app/streamlit_app.py` | stock-research linter + CI 文件 |
-| 9 | 评估层（LangFuse + OpenEvals）| 新增 eval 模块 | CASE-langfuse + CASE-openevals |
-
----
-
-## 14. 多轮对话支持（feat/multi-turn-conversation）
-
-### 14.1 实现机制
-
-多轮对话通过 LangGraph 内置的 **MemorySaver checkpointer** + **thread_id** 实现。
-
-```python
-from langgraph.checkpoint.memory import MemorySaver
-
-def create_invest_agent():
-    ...
-    return workflow.compile(checkpointer=MemorySaver())
-
-def run_invest_agent(..., thread_id: str = "default") -> dict:
-    config = {"configurable": {"thread_id": thread_id}}
-    return agent.invoke(initial_state, config=config)
-```
-
-**thread_id 语义：**
-- 同一 `thread_id` → LangGraph 加载上轮 state，`messages` 继续追加，形成对话历史
-- 不同 `thread_id` → 独立隔离的对话，互不影响
-- Streamlit 每个浏览器会话自动生成唯一 UUID 作为 `thread_id`
-
-**生命周期：** MemorySaver 是内存存储，Streamlit 服务重启后历史丢失。如需持久化可换用 `SqliteSaver`（无需额外依赖）。
-
-### 14.2 assess_query 的跟进检测逻辑
-
-多轮场景下，`assess_query` 需要区分两种情况：
-
-| 情况 | 判断依据 | 路由 | AKShare + 5阶段 |
-|---|---|---|---|
-| 跟进同一话题 | 当前查询针对已有分析的细节、风险、建议 | reactive | ❌ 不重跑 |
-| 全新话题/行业 | 新研究主题，与历史对话无直接关联 | deliberative | ✅ 重跑 |
-
-assess_query 的 prompt 必须包含对话历史摘要，使 LLM 能够做出正确判断。
-
-### 14.3 多轮行为示例
-
-```
-第1轮（thread="abc"）：
-  输入："请深度分析新能源行业的中期投资机会"
-  路由：deliberative → 5阶段完成 → final_report 存入 state
-  MemorySaver 保存完整 state
-
-第2轮（thread="abc"）：
-  输入："上述分析中哪个风险最值得关注？"
-  assess_query 读取 messages 历史 → 判断为跟进问题
-  路由：reactive → 基于已有 final_report 直接回答
-  不重调 AKShare，不重跑5阶段 ✓
-
-第3轮（thread="abc"）：
-  输入："请分析医疗器械行业的投资机会"  ← 全新话题
-  assess_query 判断：全新研究主题
-  路由：deliberative → 重新调 AKShare（sector="医疗器械"）→ 重跑5阶段 ✓
-```
-
-### 14.4 新增测试类
-
-`tests/test_agent.py` 新增 `TestMultiTurnConversation`：
-
-```python
-class TestMultiTurnConversation:
-    def test_graph_accepts_checkpointer(self): ...
-    def test_same_thread_id_accumulates_messages(self): ...
-    def test_different_thread_ids_are_isolated(self): ...
-    def test_new_thread_starts_with_empty_messages(self): ...
-    def test_followup_routes_to_reactive(self): ...
-```
-
-### 14.5 Streamlit UI 变化
-
-- 侧边栏加 "🔄 新对话" 按钮（重置 thread_id）
-- 顶部加折叠式对话历史面板（每轮一行摘要）
-- 侧边栏显示当前轮次和 thread_id 缩略
-
----
-
-## 15. 面试叙事
-
-> "InvestAgent 演示了三件 LangChain 做不到、需要 LangGraph 的事：有向环（工具调用循环）、`add_messages` reducer 追加语义、图结构级别的条件路由。架构上我把 Reactive 和 Deliberative 两条路径合并在一个 StateGraph 里，所有节点共享同一个 State，整个执行过程可以用 Mermaid 可视化，被 LangFuse 端到端追踪。Deliberative 路径的5个阶段每个都有专家角色 persona，感知阶段调用 AKShare 获取真实市场数据，后续4个阶段是纯 LLM 推理，最后由独立 Validator 节点校验报告是否满足9条 Spec 约束，不合格时通过第二个有向环路由回决策阶段重新生成。通过 MemorySaver checkpointer 和 thread_id，Agent 还支持多轮对话，能识别跟进问题并跳过已有数据的重新采集。"
+- 单元与 AppTest 测试全部 mock 外部模型/API。
+- integration 显式启用并要求真实 key，不在日常单元检查中运行。
+- 启动：make run；验证：pytest tests/ -q、python linters/check_agent_structure.py。
+
+
+## Analytics 建设进展（2026-11-12）
+
+已完成数据契约、请求内存储、结构化价格/估值快照采集、四个V1计算工具和独立Analytics子图。
+analytics-methodology运行时skill已创建并固定加载；Supervisor调度/引用交接及父图双Store注入已完成；Planner数据依赖首版与Composer分析汇总已完成；Plotly 分析看板首版已完成（当前会话最近请求快照）。
+父图analytics已启用；未执行真实模型/API端到端评估。
+完整状态、无风险利率适用范围、样本不足及协方差产物边界见 [Analytics实施规格](analytics-agent.md)。
+
+Planner计划现在检查Analytics的直接数据依赖，并支持可选analytics_parameters；Composer展示分析指标、假设和限制，见Analytics规格步骤7a。
+
+
+### MiniRacer 原生崩溃隔离（2026-11-13）
+用户报告libmini_racer.dylib地址池初始化FATAL并终止Python进程；本机AKShare的新浪解码路径使用MiniRacer。
+尚未证明具体触发条件（并发、重载或运行库状态），不把加锁视为已验证根因修复。
+所有现有stock_zh_a_daily和stock_zh_index_daily调用统一经src.tools._call_sina执行：
+使用当前Python解释器启动独立进程（不使用multiprocessing fork），白名单函数名与JSON参数通过stdin传入，
+返回JSON记录后再按现有数据契约验证。原生进程异常退出转换为Python异常，由既有工具fallback处理；
+设置60秒超时，不向用户透传原始stderr。新解释器生命周期隔离V8，服务不因该子进程原生崩溃退出。
+不修改依赖版本、不禁用工具并行；每次新浪回退增加启动开销。
+单元测试mock进程退出和超时、参数/结果传输，并继续隔离所有网络请求。
+用户原始原生崩溃未稳定复现，本次验证的是进程隔离与故障转换边界。
+
+
+## Planner 输出可靠性改进计划（2026-11-13，已确认/待实现）
+
+先统一Pydantic诊断并通过custom events在执行记录展示每次尝试；再简化LLM输出，
+由代码补齐固定默认值；核实当前ChatTongyi/模型的结构化输出机制后再迁移Planner。
+保留运行时Pydantic和依赖图业务校验，不将方法存在等同严格schema支持。
+问题证据、实施边界与验收见[Planner校验问题识别与改进计划](workflow-evolution.md#planner-校验问题识别与改进计划2026-11-13)。
+
+
+Planner可靠性阶段一首版已实现（2026-11-13）：共享validation_diagnostics格式化字段级错误，
+planner_attempt custom事件交接逐次尝试诊断，Streamlit执行记录展示。输入值预览省略，
+完整原始响应不存储；输出简化、提供方能力核实和结构化迁移仍待实施。
+
+
+Planner后续交付（2026-11-13）：模型schema投影移除固定missing_data，运行时补齐no_fill。
+默认tool_calling通过ChatTongyi.with_structured_output(dict schema)提交计划，仍用Pydantic校验。
+PLANNER_OUTPUT_MODE=json可切回原解析路径；这不是strict JSON Schema。真实3例/模式均首次通过，
+尚无失败率改善证据，详见工作流演进规格阶段二、三交付记录。
+
+
+## Strategy/Risk 专家工具规划（2026-11-13，已确认/待实现）
+
+职责为策略解释、显式情景与用户风险约束；首批建设约束检查和简单组合压力测试，
+盈利数据契约齐备后再加入估值情景。V2再评估组合优化、风险预算、HRP及Black-Litterman。
+采集复用Market Data，数值复用Analytics；当前调度仍返回unsupported。
+详见[Investment Strategy/Risk规格](investment-strategy-agent.md)。
+
+
+Strategy/Risk State设计已确认、待实现（2026-11-13）：独立状态与输入/结果契约，
+父级仅通过适配层交接授权引用与规范TaskResult；可选持仓/用户约束/显式情景与事实分开。
+数值从规范工具产物重建，完整产物与局部消息不进入父图；独立StrategyStore待定。
+详见[专题State设计](investment-strategy-agent.md#state与父子图交接设计2026-11-13已确认待实现)。
+
+
+## Strategy/Risk V1 交付边界（2026-11-13）
+
+新增strategy_state、strategy_artifacts、strategy_tools、stages/strategy、strategy_agent及strategy_handoff。
+StrategyStore在请求执行config中创建，持有工具输入/结果与独立任务scope；不进ParentState，不做持久化。
+适配层按直接依赖重建数据/分析引用，Supervisor为每次策略调用生成独立scope校验输出归属。
+有界ToolNode循环与无工具输出修正；显式约束/完整持仓情景由代码确保调用对应工具，避免模型跳过。
+普通证据解释不强制组合工具或持仓。固定运行时输入注入工具，模型不能改写持仓/约束。
+Composer保留确定性检查/情景结果，UI分析与策略页展示，执行记录新增Strategy/Risk区。
+独立StrategyStore已选用，不再是待定项。历史章节中的待实施/unsupported描述由本节更新。
+实现/验收详见[开发规格](strategy-agent-development.md)。
+
+策略用户需求与能力扩展的产品参考见[常见策略问题与扩展方向](strategy-user-questions-and-expansion.md)；
+架构职责边界保持，候选数据源、估值情景与择时能力不因归档讨论而视为已实现或已定稿。
+
+
+## 报告交付展示层（2026-11-13）
+
+app/report_viewer.py消费已生成final_report，复用validate_report，提供会话内阅读与Markdown/HTML导出。
+新增报告阅读页，节点输出保留；不把正文送Composer、不改报告子图，不增加持久化或API服务。
+长期链接、存储/权限、PDF和部署扩展见[报告交付规格](report-delivery.md)。
+这更新此前正文隐藏的UI状态；Strategy未解决问题继续暂缓。
+
+
+UI当前导航（2026-11-13）：产品层为回答、数据与分析、报告中心；默认收起的开发者调试层含规划调度、
+专家记录与报告生成过程。app/example_queries.py提供六条默认示例、边界问题及上海日期生成；点击不会自动执行。
+原流式更新/请求内快照保留，详见报告交付规格。

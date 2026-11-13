@@ -2,8 +2,8 @@
 """
 LangGraph Agent 状态定义
 
-InvestAgentState 是本项目所有 LangGraph 节点共享的唯一状态对象。
-所有节点读写同一个 state dict，无需手动传参。
+InvestAgentState 仅用于保留原报告子图的内部字段。
+父图使用 ParentState，市场数据子图使用 MarketDataState；不能将此对象当作公共返回结构。
 
 注意：
 - messages 使用 add_messages reducer（追加语义，非覆盖）
@@ -19,15 +19,12 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-# 路由约束常量（对应 spec C8）
-VALID_PROCESSING_MODES = {"reactive", "deliberative"}
-
 # 最大重试次数（对应 validator 环路②）
 MAX_VALIDATOR_RETRIES = 2
 
 
 class InvestAgentState(TypedDict):
-    """混合型投研 Agent 的统一状态。所有节点共享此 TypedDict。"""
+    """原报告子图局部状态；旧模式与消息字段仅保留内部兼容。"""
 
     # ---- 用户输入 ----
     user_query: str                     # 原始用户查询

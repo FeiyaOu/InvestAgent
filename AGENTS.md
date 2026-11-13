@@ -5,9 +5,10 @@
 
 ## 项目定位
 
-混合型智能投研助手。输入研究主题，Agent 自动判断复杂度：
-- **Reactive 路径**：简单市场查询 → 调用 AKShare 工具快速回答
-- **Deliberative 路径**：复杂研究请求 → 5个专家角色依次处理 → 结构化投研报告
+任务型智能投研助手：用户输入 → Planner → Supervisor → Composer。
+- 数据任务调用 Market Data 子图；明确报告请求调用原报告子图。
+- Analytics 已接入计算、汇总与图表；Strategy/Risk V1 已接入约束检查和静态压力测试。
+- 无 checkpoint 自动记忆；Streamlit 显式传入本会话摘要。
 
 ## 关键文件导航
 
@@ -15,8 +16,10 @@
 |---|---|
 | `spec/invest_spec.md` | 规格文档（一等公民）— C1–C9 约束权威来源 |
 | `spec/project-architecture.md` | 架构决策文档 — 所有技术选型的依据 |
-| `src/agent.py` | LangGraph StateGraph 连线（全部节点 + 路由函数）|
-| `src/schemas.py` | Pydantic 模型（5个阶段输出 + FinalReport）|
+| `src/agent.py` | 公共门面（调用 parent_graph.py，无旧 Reactive 路径）|
+| `src/parent_graph.py` | 父图接线，ParentState 与 TaskResult 见同目录对应文件 |
+| `spec/strategy-agent-development.md` | Strategy/Risk实施步骤与验收记录 |
+| `src/schemas.py` | 原报告 Pydantic 模型|
 | `src/tools.py` | AKShare 工具函数（`@tool` 装饰器，含 fallback）|
 | `src/stages/reporter.py` | `validate_report()`（唯一报告校验入口）|
 | `src/stages/validator.py` | 校验节点（触发有向环②的地方）|
@@ -34,7 +37,7 @@
 ```bash
 pytest tests/ -q                              # 全部单元测试
 pytest tests/test_reporter.py -v              # C1–C7 约束测试
-pytest tests/test_agent.py -v                 # C8–C9 路由测试
+pytest tests/test_agent.py -v                 # C8–C9 任务/响应测试
 pytest tests/ -m integration                  # 集成测试（需真实 DASHSCOPE_API_KEY）
 python linters/check_agent_structure.py       # 结构 lint 检查
 ```
