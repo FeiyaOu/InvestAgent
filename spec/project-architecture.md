@@ -98,3 +98,22 @@ Planner计划现在检查Analytics的直接数据依赖，并支持可选analyti
 不修改依赖版本、不禁用工具并行；每次新浪回退增加启动开销。
 单元测试mock进程退出和超时、参数/结果传输，并继续隔离所有网络请求。
 用户原始原生崩溃未稳定复现，本次验证的是进程隔离与故障转换边界。
+
+
+## Planner 输出可靠性改进计划（2026-11-13，已确认/待实现）
+
+先统一Pydantic诊断并通过custom events在执行记录展示每次尝试；再简化LLM输出，
+由代码补齐固定默认值；核实当前ChatTongyi/模型的结构化输出机制后再迁移Planner。
+保留运行时Pydantic和依赖图业务校验，不将方法存在等同严格schema支持。
+问题证据、实施边界与验收见[Planner校验问题识别与改进计划](workflow-evolution.md#planner-校验问题识别与改进计划2026-11-13)。
+
+
+Planner可靠性阶段一首版已实现（2026-11-13）：共享validation_diagnostics格式化字段级错误，
+planner_attempt custom事件交接逐次尝试诊断，Streamlit执行记录展示。输入值预览省略，
+完整原始响应不存储；输出简化、提供方能力核实和结构化迁移仍待实施。
+
+
+Planner后续交付（2026-11-13）：模型schema投影移除固定missing_data，运行时补齐no_fill。
+默认tool_calling通过ChatTongyi.with_structured_output(dict schema)提交计划，仍用Pydantic校验。
+PLANNER_OUTPUT_MODE=json可切回原解析路径；这不是strict JSON Schema。真实3例/模式均首次通过，
+尚无失败率改善证据，详见工作流演进规格阶段二、三交付记录。

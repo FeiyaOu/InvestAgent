@@ -119,7 +119,8 @@ def test_contract_rejects_whitespace_and_excess_tasks():
         TaskPlan.model_validate(plan([task(str(i)) for i in range(13)]))
 
 
-def test_real_chain_parses_mock_model_json_and_repairs_malformed_json():
+def test_real_chain_parses_mock_model_json_and_repairs_malformed_json(monkeypatch):
+    monkeypatch.setenv("PLANNER_OUTPUT_MODE", "json")
     import json
     from langchain_core.messages import AIMessage
     from langchain_core.runnables import RunnableLambda
@@ -133,7 +134,7 @@ def test_real_chain_parses_mock_model_json_and_repairs_malformed_json():
         result = planner({"user_query": "茅台现在多少钱？"})
     assert result["planning_status"] == "ready"
     assert len(prompts) == 2
-    assert "不是有效 JSON" in prompts[1][-1].content
+    assert "json模式" in prompts[1][-1].content
     assert "report" in prompts[0][0].content
 
 
@@ -188,7 +189,8 @@ def test_report_task_rejects_analytics_parameters():
     assert result["planning_status"] == "failed"
 
 
-def test_planner_prompt_provides_current_date_and_collection_rules():
+def test_planner_prompt_provides_current_date_and_collection_rules(monkeypatch):
+    monkeypatch.setenv("PLANNER_OUTPUT_MODE", "json")
     import json
     from langchain_core.messages import AIMessage
     from langchain_core.runnables import RunnableLambda
@@ -240,3 +242,27 @@ def test_string_assumptions_are_still_rejected():
     analysis['analytics_parameters'] = {'assumptions': 'qfq'}
     with pytest.raises(ValidationError):
         TaskPlan.model_validate(plan([task('d'), analysis]))
+
+
+def test_planner_emits_failure_and_recovery_events_for_each_attempt():
+    bad = plan()
+    bad['tasks'][0]['category'] = 'bad'
+    events = []
+    with patch('src.stages.planner.get_stream_writer', return_value=events.append):
+        result, _ = invoke([bad, plan()])
+    assert result['planning_status'] == 'ready'
+    assert [e['status'] for e in events] == ['started', 'validation_failed', 'started', 'ready']
+    assert events[1]['diagnostics'][0]['field'] == 'tasks.0.category'
+    assert len({e['run_id'] for e in events}) == 1
+    assert events[-1]['attempt'] == 2
+
+
+def test_exhausted_planning_attempts_keep_both_diagnostics():
+    bad = plan()
+    bad['tasks'][0]['category'] = 'bad'
+    events = []
+    with patch('src.stages.planner.get_stream_writer', return_value=events.append):
+        result, _ = invoke([bad, bad])
+    assert result['planning_status'] == 'failed'
+    assert [e['attempt'] for e in events if e['status'] == 'validation_failed'] == [1, 2]
+    assert events[-1]['status'] == 'failed'

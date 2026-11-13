@@ -179,3 +179,18 @@ def test_analytics_dashboard_missing_snapshot_preserves_metrics_without_fake_cha
     assert not at.get("plotly_chart")
     assert any("没有可解析" in item.value for item in at.warning)
     assert at.metric
+
+
+def test_planner_diagnostic_events_display_and_survive_rerun():
+    graph = fake()
+    old = list(graph.stream.return_value)
+    event = {'event': 'planner_attempt', 'run_id': 'test-run', 'stage': 'planner', 'attempt': 1,
+             'status': 'validation_failed', 'diagnostics': [{'field': 'tasks.0.analytics_parameters.assumptions',
+             'received_type': 'str', 'expected': 'JSON object', 'hint': '请使用对象'}]}
+    graph.stream.return_value = iter([((), 'custom', event)] + old)
+    at = submit(graph)
+    assert any('planner_attempt' in x.value for x in at.json)
+    assert any(e['node'] == 'planner_attempt' for e in at.session_state['debug_events'])
+    at.run()
+    assert any('JSON object' in x.value for x in at.json)
+    assert not at.exception

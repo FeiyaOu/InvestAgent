@@ -241,3 +241,19 @@ analytics-methodology运行时skill已创建并固定加载；Supervisor调度/�
 完整状态、无风险利率适用范围、样本不足及协方差产物边界见 [Analytics实施规格](analytics-agent.md)。
 
 Planner计划现在检查Analytics的直接数据依赖，并支持可选analytics_parameters；Composer展示分析指标、假设和限制，见Analytics规格步骤7a。
+
+
+## Planner 校验可观测性与输出约束计划（2026-11-13）
+
+已确认、待实现：统一字段级Pydantic诊断和逐次重试UI展示；减少模型生成的固定假设字段，
+代码补齐默认策略；验证当前模型提供方支持后再迁移结构化输出，并评估前后失败率。
+不改变报告C1–C9或取消运行时业务校验。详见[演进规格中的问题与修复计划](workflow-evolution.md#planner-校验问题识别与改进计划2026-11-13)。
+
+
+Planner诊断交付状态（2026-11-13）：阶段一首版完成，Planner字段级错误及逐次尝试事件已接UI。
+仅保留安全类型/约束元信息，输入值预览省略；阶段二输出简化及阶段三结构化迁移仍为计划。
+
+
+Planner阶段二、三首版状态（2026-11-13）：固定missing_data不再要求模型输出，代码补齐；
+已核实ChatTongyi使用function calling并迁移默认模式，保留PLANNER_OUTPUT_MODE=json。
+真实小样本各3/3首次校验通过，不等于稳定性改善或端到端语义验收。运行时契约/C1–C9不变。

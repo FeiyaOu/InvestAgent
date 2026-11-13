@@ -820,3 +820,111 @@ mock回归覆盖组合依赖与错误可见性，真实模型稳定性仍需后�
 AnalyticsTaskParameters.assumptions在规划边界将显式null视作省略，使用既有默认假设；
 字符串、数组和非法字段仍拒绝，不改运行时Analytics输入契约。Planner提示明确对象格式及省略规则。
 校验日志可确认字段类型不正确，但不包含原始值，不能单凭日志断定模型当次返回的是null还是字符串。
+
+
+## Planner 校验问题识别与改进计划（2026-11-13）
+
+状态：用户已确认，分阶段实施；本节记录计划，不代表下列功能已经完成。
+
+### 问题识别与当前基线
+
+明确的组合请求“比较贵州茅台和五粮液过去一年的收益、波动率和最大回撤，再比较最新PE TTM与PB”
+曾在Planner阶段两次校验失败。最新错误位置为
+`tasks.3.analytics_parameters.assumptions`，期望对象，实际值不符合AnalyticsAssumptions类型。
+这是LLM输出计划与Python契约不匹配，发生在Supervisor执行前，与行情API是否正常无关。
+现有日志未记录实际输入类型/值，因此不能确定该次是null、字符串还是数组。
+
+当前Planner仍使用提示词 + JsonOutputParser + Pydantic事后校验；默认首次生成后最多修正一次。
+已实现最后一次字段/约束反馈、组合任务示例及规划边界assumptions=null按省略处理。
+默认值只在省略时自动补齐，显式null的兼容是代码归一化，不能据此断言旧错误已彻底解决。
+仅有mock测试通过也不能证明真实模型规划稳定。
+
+### 阶段一：统一校验诊断与UI展示（首版已实现，2026-11-13）
+
+在Planner的Pydantic校验边界引入可复用诊断格式化逻辑，后续其他节点可采用同一格式；
+原报告validate_report唯一校验入口保持不变，不为统一日志增加第二套报告校验。
+每条诊断目标包含：stage、attempt、error_type、field、可定位的task_id、expected、
+received_type、受控received_preview及可执行hint。无法可靠判断期望类型时保留原约束信息，
+不猜测语义；无法安全提供值时只记录类型。预览限长、脱敏，不发送完整输入或原始异常堆栈到前端。
+
+通过现有custom stream event记录每次失败与重试结果，关联同一运行/请求，
+在Streamlit“执行记录 → Planner”展开查看，保留“首次失败、再次成功”过程。
+用户回答保持简洁，详细字段诊断放在调试展示，不把系统生成结构错误归咎于用户问题。
+原始模型响应若需服务端保留，应受控、默认不透传前端；具体开关与存储保留策略待实施时确定。
+
+验收：mock覆盖null/字符串/数组等类型错误的区分、多字段位置、各次尝试、修正成功及耗尽失败；
+前端可以查看对应诊断，敏感内容被脱敏/省略，不泄露完整输入。既有错误处理与有界重试继续生效。
+
+### 阶段二：简化Planner输出契约（首版已实现，2026-11-13）
+
+LLM主要负责任务意图、分类、依赖及执行所必需的主体和时间信息。
+固定策略如missing_data=no_fill由代码补齐；用户未明确指定的假设不要求模型生成。
+用户明确指定的窗口、年化频率等有效参数仍需保留，不能因简化而丢失。
+调整模型输出投影与运行时契约的边界，保证归一化后的计划继续兼容Supervisor及Analytics，
+不依靠宽松接受任意字段或将错误值静默转换为默认值来“通过”校验。
+
+验收：省略固定默认值仍产生规范运行时计划；显式用户参数不丢失；非法字段/错误类型仍可诊断，
+组合问题的价格与估值两条数据依赖保持正确。
+
+### 阶段三：验证结构化输出能力，再迁移Planner（工具调用迁移完成，小样本已验证）
+
+先核实当前ChatTongyi、Qwen模型及实际提供方支持的调用机制；
+不能仅因存在with_structured_output方法就视为支持严格JSON Schema。
+优先评估提供方严格schema，其次tool/function calling；缺乏支持时保留JSON模式或现有解析校验路径。
+支持与兼容验证通过后再迁移Planner，不在本次文档同步中直接替换调用。
+结构化生成后仍执行Python字段与业务校验，包括ID唯一、依赖存在、无环及Analytics直接数据依赖。
+
+以当前失败组合请求和既有代表性问题构成固定评估样例，比较迁移前后首次校验通过率、
+重试后成功率、错误类型分布与耗时。单元测试不调用真实API；真实模型评估与mock验证分开记录。
+不预设支持结论或成功率目标，不将结构化输出宣称为绝对可靠。
+
+实施顺序：先诊断与UI，再简化输出并验证提供方能力，最后迁移与对照评估。
+报告子图内部、投资策略尚未接入状态及请求级数据隔离保持现有边界。
+
+
+### 阶段一实际交付与边界（2026-11-13）
+
+新增src/validation_diagnostics.py作为独立Pydantic诊断格式化入口；当前仅Planner接入，
+输出stage/attempt/error_type/field/task_id/expected/received_type/received_preview/hint。
+received_preview统一为[omitted]，不展示输入值；期望类型支持已知Pydantic错误码，未知约束明确泛化，
+业务错误只映射已知提示，不直接透传任意自定义异常文本。task_id仅展示限定格式的机器标识。
+Planner每次开始、校验/JSON解析/数据依赖失败、成功及重试耗尽均发planner_attempt自定义事件，
+同次规划调用共用run_id；模型调用失败也记录状态。不把完整模型响应或诊断数组加入ParentState。
+Streamlit执行记录的Planner区展示并保存事件，重绘可查看，新请求/新对话沿用既有清理规则。
+普通graph.invoke和独立planner调用保持兼容；未消费custom stream的调用方只保留既有最终状态反馈。
+未实现服务端原始响应持久化、其他节点接入、输出契约简化或结构化输出迁移。
+验证使用mock/Pydantic/Streamlit AppTest，未声称真实模型稳定性或浏览器视觉验收完成。
+
+
+### 阶段二、三实际交付与兼容评估（2026-11-13）
+
+模型侧使用planner_output_schema()投影：从AnalyticsAssumptions移除固定missing_data字段，
+用户明确指定的periods_per_year/window仍可生成，未指定参数省略；question、主体、日期和依赖保留。
+运行时仍通过TaskPlan补齐missing_data=no_fill并执行全部字段/业务校验，原契约和下游不变。
+模型schema每次新建，不修改共享运行时schema。显式null在既有规划边界继续按省略处理。
+
+已检查本地langchain_community ChatTongyi.with_structured_output实现：bind_tools +
+JsonOutputKeyToolsParser（dict schema），不是提供方strict JSON Schema。
+阿里云官方Function Calling文档列出Qwen-Flash支持；本项目另做了当前账号实际请求验证：
+https://www.alibabacloud.com/help/en/model-studio/qwen-function-calling
+未强制tool_choice，未调用专家工具；TaskPlan只是提交结构化计划的协议名称。
+缺失工具调用转为可重试OutputParserException，参数类型错误仍在本项目Pydantic边界形成字段诊断。
+
+默认PLANNER_OUTPUT_MODE=tool_calling：prompt → with_structured_output(dict schema) → TaskPlan校验。
+PLANNER_OUTPUT_MODE=json保留prompt → JsonOutputParser路径，使用同一简化schema用于对照/回退。
+.env.example已记录；诊断事件附output_mode。模式不受支持时配置失败，不静默切换掩盖问题。
+
+真实模型小样本（qwen-flash，同一当前配置，默认最多修正一次，无行情/专家调用）：
+
+| 固定问题 | JSON：尝试次数/秒/任务数 | 工具结构化：尝试次数/秒/任务数 |
+|---|---|---|
+| 茅台与五粮液过去一年表现＋最新PE TTM/PB | 1 / 8.10 / 4 | 1 / 9.09 / 4 |
+| 茅台相对沪深300的超额收益、Beta、相关性、跟踪误差 | 1 / 2.48 / 2 | 1 / 9.99 / 3 |
+| 五粮液半年动量/波动率，20日窗口、年252日 | 1 / 3.23 / 2 | 1 / 4.08 / 2 |
+
+两种模式各3/3首次通过结构/依赖校验，未触发重试，错误类型为空。
+工具结构化本次更慢；该对照双方均已采用简化schema，不代表与旧完整schema的历史基线比较。
+样本不足以证明失败率下降，任务数不同也不证明任务语义更优；未验证所有采集/图表端到端结果。
+mock测试覆盖真实已安装适配器绑定/解析、无工具调用重试、默认补齐、显式参数保留及旧JSON模式。
+大规模重复评估和语义质量评估仍待后续；未将原始模型响应或凭据持久化。
+本节交付状态覆盖前文阶段一交付时“输出简化/结构化迁移未实现”的历史状态。

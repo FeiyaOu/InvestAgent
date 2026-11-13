@@ -533,3 +533,9 @@ mock回归覆盖组合依赖与错误可见性，真实模型稳定性仍需后�
 AnalyticsTaskParameters.assumptions在规划边界将显式null视作省略，使用既有默认假设；
 字符串、数组和非法字段仍拒绝，不改运行时Analytics输入契约。Planner提示明确对象格式及省略规则。
 校验日志可确认字段类型不正确，但不包含原始值，不能单凭日志断定模型当次返回的是null还是字符串。
+
+
+### Planner模型输出简化与工具结构化（2026-11-13）
+固定missing_data=no_fill由运行时模型补齐，模型侧schema不再要求生成；显式window/periods_per_year保留。
+默认工具结构化提交计划，非严格JSON Schema；运行时参数契约及Analytics内部不变。
+诊断仍保留字段级错误。PLANNER_OUTPUT_MODE=json可用于对照/回退，真实小样本结果见工作流演进规格。

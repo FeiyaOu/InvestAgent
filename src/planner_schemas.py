@@ -106,3 +106,16 @@ class PlannerState(TypedDict, total=False):
     planning_status: Literal["ready", "needs_clarification", "failed"]
     planning_error: dict | None
     planning_attempts: int
+
+
+def planner_output_schema() -> dict:
+    """Model-facing projection; fixed runtime policies are filled by TaskPlan validation.
+
+    Keep a fresh schema each call so runtime contracts and other agents are unchanged.
+    Explicit user parameters remain available; no_fill is never a model decision.
+    """
+    schema = TaskPlan.model_json_schema()
+    assumptions = schema["$defs"]["AnalyticsAssumptions"]
+    assumptions["properties"].pop("missing_data")
+    assumptions["description"] = "Only explicit user-specified parameters. Omit unspecified values."
+    return schema

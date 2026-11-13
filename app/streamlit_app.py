@@ -93,6 +93,10 @@ def _debug_details(values):
 def _render_debug(state, debug):
     with st.expander("Planner · 完整计划与规划状态", expanded=True):
         st.write({key: state.get(key) for key in ("planning_status", "planning_attempts", "planning_error")})
+        for event in debug:
+            if event["node"] == "planner_attempt":
+                st.caption(f"第 {event['details']['attempt']} 次规划 · {event['details']['status']}")
+                st.json(event)
         if state.get("plan"):
             st.json(state["plan"], expanded=True)
         else:
@@ -252,6 +256,12 @@ if run_btn and user_query.strip():
         for namespace, mode, update in graph.stream(initial, config=config,
                 subgraphs=True, stream_mode=["updates", "custom"]):
             if mode == "custom":
+                if update.get("event") == "planner_attempt":
+                    debug.append({"step": len(debug) + 1, "node": "planner_attempt", "task_id": None,
+                                  "category": None, "details": update,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
+                    with debug_slot.container():
+                        _render_debug(current, debug)
                 if update.get("event") == "analysis_artifacts":
                     snapshots.setdefault(update["task_id"], {}).update(update["artifacts"])
                 if update.get("event") == "task_started":

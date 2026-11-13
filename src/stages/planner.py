@@ -1,15 +1,20 @@
 """Independent planner node: classify and validate tasks, never execute them."""
 import json
+import os
+from uuid import uuid4
+from langgraph.config import get_stream_writer
+from src.validation_diagnostics import validation_diagnostics
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda
 from pydantic import ValidationError
 
 from src.llm import FAST_MODEL, create_llm
-from src.planner_schemas import PlannerState, TaskPlan, AnalyticsDependencyError
+from src.planner_schemas import PlannerState, TaskPlan, AnalyticsDependencyError, planner_output_schema
 
 _SYSTEM = """你是投研助手的任务规划器。只输出计划，不回答问题、不调用工具、不执行专家。
 将用户请求拆解为必要而不重复的任务，分类如下：
@@ -54,8 +59,9 @@ valuations: market_data，获取两公司最新估值快照，depends_on=[]；
 performance: analytics，分别计算两公司收益、波动率和回撤，depends_on=[prices]；
 valuation_compare: analytics，比较PE TTM/PB，depends_on=[valuations]。
 上述ID仅为示例，输出仍严格遵循schema。不要把工具参数加为任务顶层字段；
-market_data不填写analytics_parameters。analytics的assumptions仅允许periods_per_year、window、missing_data，
-assumptions必须是JSON对象（例如{{"periods_per_year":252,"missing_data":"no_fill"}}），
+market_data不填写analytics_parameters。analytics的assumptions仅允许用户明确指定的periods_per_year和window，
+固定missing_data=no_fill由代码补齐，不输出该字段；未指定的假设和analytics_parameters可省略。
+assumptions必须是JSON对象（例如{{"periods_per_year":252}}），
 无额外假设时省略或使用空对象{{}}，不能输出字符串或数组。
 不要添加adjustment、risk_free_rate、metrics等未定义字段；数据口径和所需指标写入question。
 修正反馈指出的字段或依赖错误必须在下一次计划中修复，不得机械重复上次无效结构。
@@ -64,17 +70,38 @@ assumptions必须是JSON对象（例如{{"periods_per_year":252,"missing_data":"
 最多12个任务，合并相关子问；无法可靠形成计划时返回 needs_clarification，tasks=[]，
 并提出清晰的澄清问题。ready 必须有任务且 clarification_questions=[]。
 
-严格按以下 JSON schema 输出：
+根据当前输出方式提交完整计划：tool_calling模式必须调用TaskPlan工具提交参数（不执行专家）；
+json模式仅输出JSON。不得输出解释文字。schema如下：
 {schema}
 """
 
 
+def planner_output_mode() -> str:
+    mode = os.getenv("PLANNER_OUTPUT_MODE", "tool_calling").strip()
+    if mode not in {"tool_calling", "json"}:
+        raise ValueError("PLANNER_OUTPUT_MODE must be tool_calling or json")
+    return mode
+
+
+def _require_plan_payload(value):
+    if not isinstance(value, dict):
+        raise OutputParserException("Planner必须调用TaskPlan提交完整计划。")
+    return value
+
+
 def _create_chain():
+    mode = planner_output_mode()
+    schema = planner_output_schema()
     prompt = ChatPromptTemplate.from_messages([
         ("system", _SYSTEM),
-        ("human", "当前上海日期：{current_date}\n对话上下文：\n{conversation_context}\n\n用户原文：\n{user_query}\n\n修正反馈：\n{correction}"),
-    ]).partial(schema=json.dumps(TaskPlan.model_json_schema(), ensure_ascii=False))
-    return prompt | create_llm(FAST_MODEL) | JsonOutputParser()
+        ("human", "当前上海日期：{current_date}\n对话上下文：\n{conversation_context}\n\n用户原文：\n{user_query}\n\n修正反馈：\n{correction}\n当前输出方式：{output_mode}"),
+    ]).partial(schema=json.dumps(schema, ensure_ascii=False), output_mode=mode)
+    llm = create_llm(FAST_MODEL)
+    if mode == "json":
+        return prompt | llm | JsonOutputParser()
+    # Installed ChatTongyi implements this via tool calling, not strict JSON Schema.
+    # Dict schema preserves field-level Pydantic diagnostics at our validation boundary.
+    return prompt | llm.with_structured_output(schema) | RunnableLambda(_require_plan_payload)
 
 
 def _failure(kind: str, message: str, attempts: int) -> dict:
@@ -97,26 +124,42 @@ def planner(state: PlannerState, *, max_retries: int = 1) -> dict:
         chain = _create_chain()
     except Exception:
         return _failure("model_error", "规划模型初始化失败，请稍后重试。", 0)
+    run_id = uuid4().hex
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = lambda event: None  # Standalone callers need no graph stream context.
+
+    def emit(attempt, status, diagnostics=None):
+        writer({"event": "planner_attempt", "stage": "planner", "run_id": run_id,
+                "attempt": attempt, "status": status, "diagnostics": diagnostics or [],
+                "output_mode": planner_output_mode()})
+
     correction = "无，首次规划。"
     for attempt in range(1, max_retries + 2):
+        emit(attempt, "started")
         try:
             raw = chain.invoke({"user_query": query, "conversation_context": context,
                                 "correction": correction,
                                 "current_date": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()})
             plan = TaskPlan.model_validate(raw)
             plan.validate_analytics_dependencies()
+            emit(attempt, plan.status)
             return {"plan": plan.to_state(), "planning_status": plan.status,
                     "planning_error": None, "planning_attempts": attempt}
         except ValidationError as exc:
-            # Feed field locations and constraints back, without exception inputs.
-            correction = json.dumps([
-                {"field": ".".join(map(str, error["loc"])), "message": error["msg"]}
-                for error in exc.errors()
-            ], ensure_ascii=False)
+            diagnostics = validation_diagnostics(exc, stage="planner", attempt=attempt, raw=raw)
+            emit(attempt, "validation_failed", diagnostics)
+            correction = json.dumps(diagnostics, ensure_ascii=False)
         except OutputParserException:
-            correction = "上次输出不是有效 JSON。仅输出符合系统 schema 的 JSON。"
+            correction = "上次未返回有效计划。tool_calling模式必须调用TaskPlan并提交符合schema的参数；json模式仅输出JSON。"
+            emit(attempt, "parse_failed", [{"error_type": "invalid_json", "field": "$", "hint": correction}])
         except AnalyticsDependencyError as exc:
             correction = str(exc)
+            emit(attempt, "dependency_failed", [{"error_type": "analytics_dependency", "field": "tasks.depends_on",
+                 "hint": "analytics必须直接依赖提供结构化数据的market_data或analytics任务。"}])
         except Exception:
+            emit(attempt, "model_failed")
             return _failure("model_error", "任务规划模型调用失败，请稍后重试。", attempt)
+    emit(max_retries + 1, "failed")
     return _failure("invalid_plan", "Planner生成的计划未通过校验，未执行任务。最后一次校验反馈：" + correction, max_retries + 1)
