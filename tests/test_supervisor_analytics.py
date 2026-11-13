@@ -82,7 +82,7 @@ def test_unrelated_or_expired_data_is_not_exposed():
     analytics.invoke.assert_not_called()
 
 
-def test_failed_analytics_blocks_downstream_but_strategy_remains_unsupported():
+def test_failed_analytics_blocks_downstream_and_strategy_requires_runtime_store():
     _, _, ref, config, md = setup()
     analytics = Mock(); analytics.invoke.return_value = {"status": "failed", "result": None,
         "error": {"type": "invalid_output", "message": "输出验证失败"}}
@@ -91,7 +91,7 @@ def test_failed_analytics_blocks_downstream_but_strategy_remains_unsupported():
         task("s", "investment_strategy"))}, config=config)
     assert state["task_results"]["a"]["error"]["type"] == "invalid_output"
     assert state["task_results"]["b"]["status"] == "blocked"
-    assert state["task_results"]["s"]["status"] == "unsupported"
+    assert state["task_results"]["s"]["status"] == "failed"
 
 
 def test_no_data_uses_real_agent_missing_data_path_without_llm():

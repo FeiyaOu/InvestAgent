@@ -7,7 +7,7 @@
 
 任务型智能投研助手：用户输入 → Planner → Supervisor → Composer。
 - 数据任务调用 Market Data 子图；明确报告请求调用原报告子图。
-- Analytics 已接入调度和回答汇总（图表待接）；Investment Strategy 当前返回 unsupported。
+- Analytics 已接入计算、汇总与图表；Strategy/Risk V1 已接入约束检查和静态压力测试。
 - 无 checkpoint 自动记忆；Streamlit 显式传入本会话摘要。
 
 ## 关键文件导航
@@ -18,6 +18,7 @@
 | `spec/project-architecture.md` | 架构决策文档 — 所有技术选型的依据 |
 | `src/agent.py` | 公共门面（调用 parent_graph.py，无旧 Reactive 路径）|
 | `src/parent_graph.py` | 父图接线，ParentState 与 TaskResult 见同目录对应文件 |
+| `spec/strategy-agent-development.md` | Strategy/Risk实施步骤与验收记录 |
 | `src/schemas.py` | 原报告 Pydantic 模型|
 | `src/tools.py` | AKShare 工具函数（`@tool` 装饰器，含 fallback）|
 | `src/stages/reporter.py` | `validate_report()`（唯一报告校验入口）|

@@ -1,6 +1,9 @@
 """Deterministic supervisor; no planner, composer, or UI entrypoint changes."""
 import json
 from copy import deepcopy
+from uuid import uuid4
+from src.strategy_agent import create_strategy_agent
+from src.strategy_handoff import strategy_inputs, strategy_result
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
@@ -81,7 +84,7 @@ def _dependency_evidence(task, results):
     return evidence
 
 
-def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analytics_graph=None):
+def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analytics_graph=None, strategy_graph=None):
     """Sequential dispatcher for a validated plan (max 12 tasks).
 
     Partial dependencies may proceed with their available evidence. Failed,
@@ -91,6 +94,8 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analyt
     market = create_market_data_agent() if market_data_graph is None else market_data_graph
     report = create_report_graph() if report_graph is None else report_graph
     analytics = create_analytics_agent() if analytics_graph is None else analytics_graph
+
+    strategy = create_strategy_agent() if strategy_graph is None else strategy_graph
 
     def dispatch(state: SupervisorState, config: RunnableConfig) -> dict:
         results = dict(state["task_results"])
@@ -107,14 +112,18 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analyt
         blocked = [dep for dep in task["depends_on"] if results[dep]["status"] not in {"completed", "partial"}]
         if blocked:
             status, error = "blocked", _error("dependency_failed", f"前置任务不可用：{', '.join(blocked)}")
-        elif category == "investment_strategy":
-            status, error = "unsupported", _error("capability_unavailable", f"{category} 能力尚未接入。")
         else:
             try:
                 if category == "market_data":
                     raw = market.invoke({"task": task["question"],
                                          "existing_evidence": _dependency_evidence(task, results)}, config=config)
                     status, result, error = _market_result(raw)
+                elif category == "investment_strategy":
+                    inputs = strategy_inputs(task, results, config)
+                    child = dict(config)
+                    child["configurable"] = {**config.get("configurable", {}), "strategy_expected_scope": uuid4().hex}
+                    raw = strategy.invoke(inputs, config=child)
+                    status, result, error = strategy_result(raw, inputs, child)
                 elif category == "analytics":
                     inputs = analytics_inputs(task, results, config)
                     raw = analytics.invoke(inputs, config=config)

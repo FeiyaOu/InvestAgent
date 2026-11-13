@@ -6,6 +6,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.analytics_state import AnalyticsResult
+from src.strategy_state import StrategyResult
 from src.composer_state import ComposedAnswer
 from src.parent_state import ParentState
 from src.llm import FAST_MODEL, create_llm
@@ -24,7 +25,12 @@ def _create_chain():
          "Analytics指标以findings的数值与metric_units为准，不重新计算或填补null。"
          "fraction的0.05是5%，percent的2是2%；明确日期、样本数、实际参数和缺失限制。"
          "PE较低不等于值得买，技术指标不等于未来收益保证。"
-         "报告正文暂时隐藏，报告任务仅说明状态，不生成报告正文或自行补充研究内容。"
+         "仅凭PE/PB差异不能确认成长性、资产重估或市场定价原因；没有基本面证据的原因仅能标为待验证假设。"
+         "Strategy的约束与压力测试只用constraint_checks/scenario_results规范结果；不重算，不隐藏违规或无法检查项。"
+         "区分用户假设与agent_proposed情景；不把情景收益当作预测或概率。"
+         "若策略约束检查任务失败，不自行比较阈值冒充已经完成检查；保留Analytics数值并说明检查未完成。"
+         "最大回撤不依赖年化频率，非总回报不自动意味着低估，禁止推断未给定的偏差方向。"
+         "报告正文在独立阅读页展示，报告任务只说明状态与阅读下载位置，不复制正文或补充研究内容。"
          "输出严格 JSON，只含非空字符串字段 answer。"),
         ("human", "用户原问题：\n{user_query}\n\n任务结果：\n{task_results}"),
     ])
@@ -52,8 +58,14 @@ def _public_records(records):
                 "dataset_id", "symbol", "kind", "provider", "source_url", "start_date", "end_date",
                 "retrieved_at", "data_mode", "adjustment", "currency") if key in ref}
                 for ref in analytical["dataset_refs"]]
+        elif record.get("category") == "investment_strategy" and record.get("status") in {"completed", "partial"}:
+            strategy = StrategyResult.model_validate(result).model_dump(mode="json")
+            item["answer"] = strategy["summary"]
+            for key in ("opportunities", "risks", "scenario_results", "constraint_checks", "assumptions",
+                        "limitations", "missing_information", "missing_data_requests", "dataset_refs", "evidence"):
+                item[key] = strategy[key]
         elif record.get("category") == "report":
-            item["notice"] = "报告正文暂时隐藏，请查看节点结果。"
+            item["notice"] = "请到「报告阅读」查看报告和下载；未完成任务请查看节点结果。"
         # Only forward structured application errors, never raw provider exceptions.
         if record.get("error"):
             item["error"] = record["error"]
@@ -106,6 +118,15 @@ def _details(records):
             for request in item.get("missing_data_requests", []):
                 lines.append(f"待补数据：{request['kind']} · {', '.join(request['subjects'])} · "
                              f"{request['time_range']}；{request['reason']}")
+        if item.get("category") == "investment_strategy":
+            for title, key in (("机会", "opportunities"), ("风险", "risks")):
+                for claim in item.get(key, []):
+                    lines.append(f"{title}：{claim['text']}；依据：{', '.join(claim['evidence_ids'])}")
+            for key in ("constraint_checks", "scenario_results", "assumptions", "missing_data_requests"):
+                if item.get(key):
+                    lines.append(key + "：" + json.dumps(item[key], ensure_ascii=False, allow_nan=False))
+            for limitation in item.get("limitations", []):
+                lines.append("限制：" + limitation)
         if item.get("error"):
             lines.append(f"原因 [{item['error']['type']}]：{item['error']['message']}")
         if item.get("notice"):
@@ -150,6 +171,12 @@ def composer(state: ParentState) -> dict:
     if not usable:
         return {"final_response": details or "未获得可用任务结果，请检查问题或稍后重试。",
                 "composition_status": "failed", "composition_error": None}
+    # Do not let the summarizer silently replace a failed risk-check specialist.
+    if any(item['category'] == 'investment_strategy' and item['status'] in {'failed', 'blocked', 'unsupported'}
+           for item in records):
+        return {'final_response': details, 'composition_status': 'fallback',
+                'composition_error': {'type': 'strategy_incomplete',
+                                      'message': '策略任务未完成，已保留可用数值和具体错误，不另行推断约束结论。'}}
     # No model call is needed if the only artifacts are hidden reports.
     if not any(item.get("answer") for item in records):
         return {"final_response": details, "composition_status": "completed", "composition_error": None}

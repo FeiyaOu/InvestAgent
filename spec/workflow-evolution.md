@@ -928,3 +928,111 @@ PLANNER_OUTPUT_MODE=json保留prompt → JsonOutputParser路径，使用同一�
 mock测试覆盖真实已安装适配器绑定/解析、无工具调用重试、默认补齐、显式参数保留及旧JSON模式。
 大规模重复评估和语义质量评估仍待后续；未将原始模型响应或凭据持久化。
 本节交付状态覆盖前文阶段一交付时“输出简化/结构化迁移未实现”的历史状态。
+
+
+## Investment Strategy/Risk 工具范围确认（2026-11-13）
+
+用户确认：先建设有证据的策略解释、显式情景计算和约束检查，不做V1自动选股或复杂优化。
+首批工具为evaluate_risk_constraints与简单价格冲击版stress_test_portfolio；
+run_valuation_scenarios待结构化EPS/可靠盈利基数补齐后接入。
+组合优化、风险预算/风险平价、HRP与Black-Litterman归V2，具体库支持分别核实。
+复用Market Data采集及Analytics数值，不创建仅返回策略解释文本的工具；
+无用户限制不判断适合性，缺少持仓不强做组合测试，事实与假设须分开。
+当前investment_strategy仍unsupported。详情与验收边界见[Strategy/Risk专题规格](investment-strategy-agent.md)。
+
+
+### Strategy/Risk State边界确认（2026-11-13，待实现）
+
+独立StrategyState与Pydantic输入/结果契约；输入包含任务、授权证据/分析引用及可选持仓、用户约束、
+显式情景假设。messages与调用计数留在子图，完整产物放请求级Store，独立StrategyStore尚待决定。
+数值从工具产物重建，经适配层返回TaskResult给Composer；不合并子图完整状态到父图。
+缺少无关可选持仓不阻断单股解释；必要数据缺失返回partial，技术异常failed。
+字段和验收见[Strategy/Risk State设计](investment-strategy-agent.md#state与父子图交接设计2026-11-13已确认待实现)。
+
+
+## Strategy/Risk V1 自主分步开发交付（2026-11-13）
+
+用户授权编写可复用开发步骤并自主逐步完成V1。已创建[实施规格](strategy-agent-development.md)，
+按契约→确定性工具→有界子图→授权交接→父图→Composer/UI完成。
+首版两个工具、独立StrategyStore、strategy_parameters和Strategy执行记录均接入；
+投资策略类别不再unsupported。具体输入、数值限制及验收见[专题规格](investment-strategy-agent.md)。
+原报告内部、四阶段输出及正文隐藏策略不变。估值情景与V2保持未实施。
+真实模型抽查测试假设组合成功：仓位60%/30%/现金10%，冲击-20%/-10%，组合收益-15%，
+用户单股上限50%被正确识别为茅台违规；Planner尝试2次，模型汇总完成，无行情调用。
+这不代表所有真实策略问题、数值解释或浏览器视觉已经验收。
+
+
+## 回撤约束链路失败保护（2026-11-13）
+
+用户实测Analytics正确生成历史回撤，但Strategy任务失败，最终回答仍给出超限判断。
+已有strategy_result曾把所有子图失败统一变成strategy_failed，无法据旧日志确定原始触发原因。
+使用本地测试价格产物+真实模型重放策略阶段成功，未稳定复现用户当次失败；不能断言是某个特定工具/引用错误。
+
+本轮明确修正：
+- 适配层保留白名单内的应用错误码和安全提示，未知错误仍采用通用错误，不透传供应商异常。
+- Strategy初始化/输出校验发strategy_diagnostic自定义事件，复用安全字段诊断并在执行记录展示。
+- 确定性工具已有规范产物时，解释模型失败、重复调用或输出修正耗尽返回partial并重建计算结果，
+  missing_information记录解释未完成；不引用无效LLM结论。没有规范产物的技术失败仍failed。
+- 首轮显式约束/情景工具执行后，解释阶段不再绑定工具，避免正常解释重复计算。
+- Strategy若failed/blocked/unsupported，Composer直接使用确定性逐任务结果作为fallback，
+  不再让汇总模型替代失败专家自行完成阈值检查。
+- 提示明确年化频率不决定最大回撤；非总回报口径不自动证明回报低估，禁止推断偏差方向。
+
+全量364单元测试通过，结构lint与diff检查通过；覆盖模型失败仍保留回撤检查、错误码、字段诊断UI及汇总隔离。
+原报告内部不变。该修正提高可用性与可观测性，不宣称旧失败的精确原因已经被证明。
+
+
+## 纯策略解释的工具适用性修正（2026-11-13）
+
+用户提供的双股表现+估值链路日志显示：没有持仓、限制或情景时，首次解释仍绑定两个工具，
+模型无意义地调用evaluate_risk_constraints得到空检查，再请求未注册工具而触发tool_scope_error。
+已有计算/引用交接成功；旧日志没有记录被拒绝的具体工具名，不臆测名称。
+上一轮仅关闭了“工具执行后的解释”绑定，未覆盖“从未需要工具的首次解释”，本次补齐。
+
+V1工具选择完全由显式输入决定：用户约束触发风险检查，持仓+情景触发压力测试，
+仍由ToolNode执行并受预算/参数/作用域校验。之后以及纯证据解释阶段LLM均不绑定工具。
+若提供方仍返回tool_calls，不执行、不把未匹配工具消息塞入历史；记录安全工具名诊断，
+由finalize统一使用既有输出修正预算。修正成功可completed；耗尽且已有规范计算则partial保留结果，
+无计算产物则failed，不放宽工具白名单。
+
+同时提示Analytics/Strategy/Composer：PE/PB差异不能单独证明成长性、资产重估或市场定价原因，
+缺少基本面证据时仅描述差异，原因标为待验证假设；该提示不等于语义质量已被程序证明。
+新增回归覆盖无约束纯解释不绑定工具、未注册请求安全修正、双股表现+估值三份分析产物直接解释。
+没有调用真实行情或新增模型抽样；报告内部不变。
+
+
+## 纯解释引用字段混淆的复现与修正（2026-11-13）
+
+用户再次报告纯机会分析invalid_output。用相同问题、本地双股价格/估值计算产物和真实模型重放，
+明确复现一种失败：模型把上游analysis_ ID填入StrategyAnswer.artifact_ids，而该字段只允许当前scope的strategy_工具产物。
+纯解释没有执行策略工具，因此合法artifact_ids为空。旧修正仅反馈空artifact_id列表，未指出字段含义，
+模型第二次原样返回，最终失败。该重放证明这个具体失败模式，不假定无原始响应的历史失败全部同因。
+
+修正：
+- 模型侧strategy_answer_schema移除artifact_ids；已执行工具产物由代码选择和重建。
+  运行时StrategyAnswer保留兼容字段，但错误/未知引用仍拒绝，不把analysis ID悄悄转为策略产物。
+- 每次解释与修正提供分类引用清单：dataset_ids、analysis_ids、有效evidence_ids、strategy_artifact_ids；
+  明确上游分析应填opportunities/risks的evidence_ids，纯解释没有strategy产物是正常状态。
+- StrategyReferenceError提供reference_scope字段诊断、修正提示和尝试次数；不再把引用错误当成空诊断。
+- 追加到模型的工具产物摘要不复制完整inputs，避免不必要的重复上下文。
+
+修正后的真实模型重放首次通过结构/引用校验，因本地样本短且缺基本面返回partial，无执行错误。
+这不是使用用户原有真实日线数据的端到端重跑，也不证明生成文字的经济推断全部正确。
+测试继续覆盖错误字段能被修正、非法引用仍拒绝、纯解释无需策略工具；报告内部保持不变。
+
+## Strategy invalid_output 暂缓处理（2026-11-13，用户最新决定）
+
+用户确认：移除模型artifact_ids等修正后，双股估值+历史表现的纯策略解释问题仍未解决。
+此前369项测试及本地模型抽查通过不等于该真实链路已修复；当前持续失败的具体原因未知。
+状态改为未解决/暂缓，不继续本问题的代码或API排查，先推进其他工作；已有改动保留。
+后续恢复与验收要求见[Strategy专题未解决问题](investment-strategy-agent.md#未解决问题纯策略解释-invalid_output2026-11-13)。
+
+
+## 报告交付：会话内阅读与下载（2026-11-13）
+
+用户授权先做“生成后立即查看、下载”，其他扩展仅记spec。
+新增报告阅读tab，按报告任务显示结构化成品，支持Markdown和独立HTML下载；
+节点tab保留四阶段输出。failed不作为成品，partial或校验不通过标为草稿。
+不会因阅读/下载重新生成，无数据库或长期分享URL。报告内部不改，Strategy已暂缓问题不在本次范围。
+[详细规格与扩展计划](report-delivery.md)包括持久化、分享/权限、PDF、图表及Streamlit部署边界。
+本节覆盖第7节及后续历史记录中“报告正文和下载暂时隐藏”的现行展示决定。

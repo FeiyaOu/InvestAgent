@@ -18,7 +18,7 @@ Planner 产生四类任务和依赖。Supervisor 是确定性顺序调度图，�
 |---|---|---|
 | market_data | src/market_data_agent.py | 已接入，工具循环与输出验证 |
 | analytics | src/analytics_agent.py | 已接入调度、分析汇总与 Plotly 看板 |
-| investment_strategy | 待建设 | unsupported |
+| investment_strategy | src/strategy_agent.py | V1已接入：证据解释、约束与静态压力测试 |
 | report | src/report_graph.py | 已接入，原六节点流程 |
 
 独立任务依次执行；依赖任务等待前置结果。partial 可传递可用证据，失败依赖阻断下游。
@@ -117,3 +117,40 @@ Planner后续交付（2026-11-13）：模型schema投影移除固定missing_data
 默认tool_calling通过ChatTongyi.with_structured_output(dict schema)提交计划，仍用Pydantic校验。
 PLANNER_OUTPUT_MODE=json可切回原解析路径；这不是strict JSON Schema。真实3例/模式均首次通过，
 尚无失败率改善证据，详见工作流演进规格阶段二、三交付记录。
+
+
+## Strategy/Risk 专家工具规划（2026-11-13，已确认/待实现）
+
+职责为策略解释、显式情景与用户风险约束；首批建设约束检查和简单组合压力测试，
+盈利数据契约齐备后再加入估值情景。V2再评估组合优化、风险预算、HRP及Black-Litterman。
+采集复用Market Data，数值复用Analytics；当前调度仍返回unsupported。
+详见[Investment Strategy/Risk规格](investment-strategy-agent.md)。
+
+
+Strategy/Risk State设计已确认、待实现（2026-11-13）：独立状态与输入/结果契约，
+父级仅通过适配层交接授权引用与规范TaskResult；可选持仓/用户约束/显式情景与事实分开。
+数值从规范工具产物重建，完整产物与局部消息不进入父图；独立StrategyStore待定。
+详见[专题State设计](investment-strategy-agent.md#state与父子图交接设计2026-11-13已确认待实现)。
+
+
+## Strategy/Risk V1 交付边界（2026-11-13）
+
+新增strategy_state、strategy_artifacts、strategy_tools、stages/strategy、strategy_agent及strategy_handoff。
+StrategyStore在请求执行config中创建，持有工具输入/结果与独立任务scope；不进ParentState，不做持久化。
+适配层按直接依赖重建数据/分析引用，Supervisor为每次策略调用生成独立scope校验输出归属。
+有界ToolNode循环与无工具输出修正；显式约束/完整持仓情景由代码确保调用对应工具，避免模型跳过。
+普通证据解释不强制组合工具或持仓。固定运行时输入注入工具，模型不能改写持仓/约束。
+Composer保留确定性检查/情景结果，UI分析与策略页展示，执行记录新增Strategy/Risk区。
+独立StrategyStore已选用，不再是待定项。历史章节中的待实施/unsupported描述由本节更新。
+实现/验收详见[开发规格](strategy-agent-development.md)。
+
+策略用户需求与能力扩展的产品参考见[常见策略问题与扩展方向](strategy-user-questions-and-expansion.md)；
+架构职责边界保持，候选数据源、估值情景与择时能力不因归档讨论而视为已实现或已定稿。
+
+
+## 报告交付展示层（2026-11-13）
+
+app/report_viewer.py消费已生成final_report，复用validate_report，提供会话内阅读与Markdown/HTML导出。
+新增报告阅读页，节点输出保留；不把正文送Composer、不改报告子图，不增加持久化或API服务。
+长期链接、存储/权限、PDF和部署扩展见[报告交付规格](report-delivery.md)。
+这更新此前正文隐藏的UI状态；Strategy未解决问题继续暂缓。

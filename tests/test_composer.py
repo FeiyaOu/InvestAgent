@@ -34,7 +34,7 @@ def test_report_body_and_intermediates_never_reach_composer_model():
         result = composer(state(r))
     assert "SECRET" not in str(chain.invoke.call_args)
     assert "SECRET" not in result["final_response"]
-    assert "暂时隐藏" in result["final_response"]
+    assert "报告阅读" in result["final_response"]
 
 
 def test_model_failure_falls_back_to_available_results():
@@ -174,4 +174,15 @@ def test_invalid_numeric_analysis_is_rejected_without_model_call():
     with patch("src.stages.composer._create_chain") as factory:
         result = composer(state(broken))
     assert result["composition_error"]["type"] == "invalid_task_results"
+    factory.assert_not_called()
+
+
+def test_failed_strategy_cannot_be_replaced_by_model_threshold_check():
+    failed={**record('s','investment_strategy','failed'), 'result':None,
+            'error':{'type':'invalid_output','message':'解释校验失败'}}
+    with patch('src.stages.composer._create_chain') as factory:
+        result=composer(state(analytical_record(),failed))
+    assert result['composition_status']=='fallback'
+    assert 'period_return' in result['final_response']
+    assert 'invalid_output' in result['final_response']
     factory.assert_not_called()

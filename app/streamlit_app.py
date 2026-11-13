@@ -14,12 +14,13 @@ from dotenv import dotenv_values, load_dotenv
 import streamlit as st
 
 from app.analytics_dashboard import render_analytics_task
+from app.strategy_dashboard import render_strategy_task
+from app.report_viewer import render_report
 
 from src.tools import USE_REAL_DATA_ENV, parse_bool, data_mode, set_use_real_data
 
 _ENV_PATH = os.path.join(_project_root, ".env")
 load_dotenv(_ENV_PATH)
-_SHOW_FINAL_REPORT = False
 _REPORT_FIELDS = ("perception_data", "world_model", "reasoning_plans", "selected_plan")
 _LABELS = {"completed": "已完成", "partial": "部分完成", "failed": "失败",
            "unsupported": "尚未接入", "blocked": "前置任务不可用"}
@@ -106,6 +107,14 @@ def _render_debug(state, debug):
         for event in debug:
             if event["node"] == "task_started" or event["details"].get("tasks") is not None:
                 st.json(event)
+    with st.expander("Strategy/Risk · 模型、工具与校验", expanded=True):
+        found = False
+        for event in debug:
+            if event.get("category") == "investment_strategy":
+                found = True
+                st.json(event)
+        if not found:
+            st.info("暂无 Strategy/Risk 执行事件。")
     with st.expander("Market Data · 模型输出、工具批次与校验", expanded=True):
         st.caption("同一条 AI 消息里的多个 tool_calls 是同轮批次，可由 ToolNode 并行执行；跨消息批次为后续轮次。时间为收到节点事件的时间，不代表单个工具开始或结束时间。")
         found = False
@@ -164,12 +173,12 @@ def _render_results(state, progress, snapshots=None, render_id="final"):
         if not found:
             st.info("尚无数据证据。")
     with analysis_tab:
-        st.caption("分析图表来自已验证计算产物；仅在当前会话保留最近请求。Investment Strategy 仍为 unsupported。")
+        st.caption("分析图表来自已验证计算产物；仅在当前会话保留最近请求。Strategy/Risk V1 已接入。")
         for ident, record in records.items():
             if record["category"] == "analytics":
                 render_analytics_task(ident, record, snapshots, render_id=render_id)
             if record["category"] == "investment_strategy":
-                st.write(f"{ident}：{_LABELS.get(record['status'], record['status'])}")
+                render_strategy_task(ident, record)
             if record["category"] == "report":
                 payload = record.get("result") or {}
                 for field in _REPORT_FIELDS[1:]:
@@ -177,7 +186,7 @@ def _render_results(state, progress, snapshots=None, render_id="final"):
                         st.markdown(f"**{ident} · {field}**")
                         st.json(payload[field])
     with report_tab:
-        st.caption("四节点完整输出；最终报告正文、下载和评估暂时隐藏。")
+        st.caption("四节点完整输出保持可见；成品报告请到「报告阅读」查看和下载。")
         reports = dict(progress)
         for ident, record in records.items():
             if record["category"] == "report":
@@ -187,8 +196,14 @@ def _render_results(state, progress, snapshots=None, render_id="final"):
         for ident, payload in reports.items():
             st.markdown(f"**报告任务 {ident}**")
             _render_nodes(payload)
-            if _SHOW_FINAL_REPORT and payload.get("final_report"):
-                st.write(payload["final_report"])
+    with reader_tab:
+        found = False
+        for ident, record in records.items():
+            if record["category"] == "report":
+                found = True
+                render_report(ident, record, render_id=render_id)
+        if not found:
+            st.info("生成报告后，可在这里立即阅读并下载。本轮尚无报告任务。")
 
 
 with st.sidebar:
@@ -205,8 +220,8 @@ with st.sidebar:
     st.caption(f"已完成 {st.session_state['turn_count']} 轮")
 
 st.title("📊 InvestAgent · 投研工作台")
-st.caption("Planner → Supervisor → Market Data / Report → Composer")
-st.info("数据查询、Analytics 与报告已接入调度；分析看板已接入，Investment Strategy 尚未接入。报告正文暂时隐藏。")
+st.caption("Planner → Supervisor → Market Data / Analytics / Strategy / Report → Composer")
+st.info("数据查询、Analytics 与报告已接入调度；分析看板已接入，Strategy/Risk V1 已接入。成品报告可在「报告阅读」查看并下载。")
 if st.session_state["conversation_history"]:
     with st.expander("对话历史与上下文"):
         for turn in st.session_state["conversation_history"]:
@@ -221,10 +236,10 @@ for col, (label, query) in zip(st.columns(3), examples):
 user_query = st.text_area("您想研究什么？", key="query_input", height=110)
 run_btn = st.button("🚀 运行研究任务", type="primary", width="stretch")
 st.caption("报告主题、行业和时间范围请直接写入问题；目前不提供未绑定任务的全局报告参数。")
-answer_tab, data_tab, analysis_tab, report_tab, trace_tab = st.tabs(
-    ["回答", "数据与证据", "分析与策略", "节点结果", "执行记录"])
+answer_tab, data_tab, analysis_tab, report_tab, reader_tab, trace_tab = st.tabs(
+    ["回答", "数据与证据", "分析与策略", "节点结果", "报告阅读", "执行记录"])
 # Each tab has its own replaceable container during execution.
-containers = [tab.empty() for tab in (answer_tab, data_tab, analysis_tab, report_tab)]
+containers = [tab.empty() for tab in (answer_tab, data_tab, analysis_tab, report_tab, reader_tab)]
 
 if run_btn and user_query.strip():
     from src.agent import create_invest_agent
@@ -262,6 +277,12 @@ if run_btn and user_query.strip():
                                   "received_at": datetime.now(timezone.utc).isoformat()})
                     with debug_slot.container():
                         _render_debug(current, debug)
+                if update.get("event") == "strategy_diagnostic":
+                    debug.append({"step": len(debug) + 1, "node": "strategy_diagnostic", "task_id": active_task,
+                                  "category": "investment_strategy", "details": update,
+                                  "received_at": datetime.now(timezone.utc).isoformat()})
+                    with debug_slot.container():
+                        _render_debug(current, debug)
                 if update.get("event") == "analysis_artifacts":
                     snapshots.setdefault(update["task_id"], {}).update(update["artifacts"])
                 if update.get("event") == "task_started":
@@ -292,11 +313,11 @@ if run_btn and user_query.strip():
                 events.append({"step": len(events) + 1, "node": node,
                                "task_id": active_task or "", "scope": "/".join(namespace) or "parent"})
             # Render each view in its own replaceable tab container.
-            old_tabs = (answer_tab, data_tab, analysis_tab, report_tab)
-            answer_tab, data_tab, analysis_tab, report_tab = [c.container() for c in containers]
+            old_tabs = (answer_tab, data_tab, analysis_tab, report_tab, reader_tab)
+            answer_tab, data_tab, analysis_tab, report_tab, reader_tab = [c.container() for c in containers]
             render_seq += 1
             _render_results(current, progress, snapshots, render_id=f"stream_{render_seq}")
-            answer_tab, data_tab, analysis_tab, report_tab = old_tabs
+            answer_tab, data_tab, analysis_tab, report_tab, reader_tab = old_tabs
             with debug_slot.container():
                 _render_debug(current, debug)
             with status:

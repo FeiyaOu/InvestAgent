@@ -1,16 +1,19 @@
 # InvestAgent — LangGraph 投研助手
 
-用户输入由 Planner 拆为任务，Supervisor 调度 Market Data / Report 子图，Composer 汇总结果。
-数据查询、Analytics 和完整报告已接入调度；分析汇总与 Plotly 看板已接入，Investment Strategy 尚未接入。
+用户输入由 Planner 拆为任务，Supervisor 调度 Market Data / Analytics / Strategy / Report 子图，Composer 汇总结果。
+数据查询、Analytics 和完整报告已接入调度；分析汇总与 Plotly 看板已接入，Strategy/Risk V1 已接入（约束检查与静态压力测试）。
 原 Reactive 路径已移除。完整设计见 [主规格](spec/invest_spec.md) 与 [架构](spec/project-architecture.md)。
 
 ```text
 用户输入 + 显式会话摘要 → Planner → Supervisor → Composer → 回答
                                     ├─ Market Data（LLM + ToolNode）
+                                    ├─ Analytics（确定性计算与图表）
+                                    ├─ Strategy/Risk（约束检查与静态压力测试）
                                     └─ Report（感知→建模→推理→决策→报告→校验）
 ```
 
-Streamlit 展示逐任务结果与报告四个中间节点，报告正文暂时隐藏。
+Streamlit 展示逐任务结果与报告四个中间节点；生成后可在“报告阅读”查看并下载Markdown/HTML。
+报告仅保留当前会话最近结果，不提供长期分享链接，详见[报告交付规格](spec/report-delivery.md)。
 没有 checkpoint 自动记忆；会话摘要仅存于当前浏览器会话，刷新或重启可能丢失。
 
 ## 快速开始

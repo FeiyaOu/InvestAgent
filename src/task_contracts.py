@@ -39,6 +39,10 @@ class TaskResult(PlanTask):
             output.pop("analytics_parameters", None)
         else:
             output["analytics_parameters"] = self.analytics_parameters.model_dump(exclude_none=True)
+        if self.strategy_parameters is None:
+            output.pop("strategy_parameters", None)
+        else:
+            output["strategy_parameters"] = self.strategy_parameters.model_dump(mode="json", exclude_none=True)
         return output
 
 

@@ -59,11 +59,11 @@ def test_partial_state_is_not_silent_success():
     assert "unsupported" in str(at.dataframe[0].value)
 
 
-def test_report_nodes_visible_and_report_body_hidden():
+def test_report_nodes_remain_visible_when_final_report_is_unreadable():
     payload = {"perception_data": {"market_overview": "市场证据"}, "world_model": {"market_state": "震荡"},
                "reasoning_plans": [], "selected_plan": {"investment_thesis": "决策依据"},
                "final_report": "SECRET_REPORT"}
-    at = submit(fake({"r": task("r", "report", result=payload)}, final="报告正文暂时隐藏"))
+    at = submit(fake({"r": task("r", "report", result=payload)}, final="报告内容不可读取，请查看节点结果"))
     assert {h.value for h in at.tabs[3].subheader} >= {"perception_data", "world_model", "reasoning_plans", "selected_plan"}
     assert len(at.tabs[3].json) == 4
     assert "SECRET_REPORT" not in str([j.value for j in at.json])
@@ -194,3 +194,60 @@ def test_planner_diagnostic_events_display_and_survive_rerun():
     at.run()
     assert any('JSON object' in x.value for x in at.json)
     assert not at.exception
+
+
+def test_strategy_results_display_deterministic_checks_and_scenarios():
+    from tests.test_strategy_tools import context
+    from tests.test_strategy_agent import answer
+    from src.strategy_agent import create_strategy_agent
+    _,cfg=context()
+    llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
+    with patch('src.stages.strategy.create_llm',return_value=llm):
+        result=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
+    record=task('s','investment_strategy',result=result['result'])
+    at=submit(fake({'s':record}, final='策略结果'))
+    assert any(m.label=='情景组合收益' and m.value=='-8.00%' for m in at.metric)
+    assert any('violated' in str(d.value) for d in at.dataframe)
+    at.run()
+    assert not at.exception
+    assert any(m.label=='情景组合收益' for m in at.metric)
+
+
+def test_strategy_field_diagnostics_are_visible_in_execution_record():
+    graph=fake()
+    old=list(graph.stream.return_value)
+    event={'event':'strategy_diagnostic','stage':'strategy','error_type':'invalid_strategy_input',
+           'message':'输入无效','diagnostics':[{'field':'portfolio.as_of_date','received_type':'missing'}]}
+    graph.stream.return_value=iter([((), 'custom', event)]+old)
+    at=submit(graph)
+    assert any('portfolio.as_of_date' in item.value for item in at.json)
+
+
+def test_completed_report_can_be_read_and_downloaded_without_reexecution(valid_report):
+    import json
+    graph=fake({'r':task('r','report',result={'final_report':json.dumps(valid_report,ensure_ascii=False),
+        'perception_data':{'market_overview':'市场证据'}})},final='报告已生成')
+    at=submit(graph)
+    assert any(valid_report['research_topic'] in m.value for m in at.markdown)
+    buttons=at.get('download_button')
+    assert len(buttons)==2
+    assert {'下载 Markdown','下载 HTML'}=={b.proto.label for b in buttons}
+    at.run()
+    assert not at.exception and graph.stream.call_count==1
+    next(b for b in at.button if '新对话' in b.label).click();at.run()
+    assert not at.get('download_button')
+
+
+def test_failed_report_cannot_be_downloaded_as_completed(valid_report):
+    record=task('r','report','failed',result={'final_report':valid_report})
+    record['error']={'type':'report_failed','message':'报告流程失败'}
+    at=submit(fake({'r':record},status='failed',final='报告失败'))
+    assert not at.get('download_button')
+
+
+def test_partial_report_is_draft_and_multiple_reports_have_distinct_downloads(valid_report):
+    record=task('r1','report','partial',result={'final_report':valid_report})
+    another=task('r2','report',result={'final_report':valid_report})
+    at=submit(fake({'r1':record,'r2':another},status='partial'))
+    assert len(at.get('download_button'))==4
+    assert any('草稿' in item.value for item in at.warning)

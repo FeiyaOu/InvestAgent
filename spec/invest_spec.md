@@ -5,7 +5,7 @@
 
 ---
 
-## 当前运行架构（2026-11-10）
+## 当前运行架构（2026-11-13）
 
 公共入口和 Streamlit 已切换为请求级父图：
 
@@ -14,7 +14,8 @@
   → initialize → Planner → Supervisor → Composer → final_response
                      │        ├─ market_data 子图（LLM / ToolNode 循环）
                      │        ├─ report 子图（原六节点保持不变）
-                     │        └─ analytics / investment_strategy：unsupported
+                     │        ├─ analytics 子图（计算与图表）
+                     │        └─ investment_strategy 子图（V1约束/压力测试）
                      └─ 澄清或失败 → Composer，不执行专家
 ```
 
@@ -257,3 +258,52 @@ Planner诊断交付状态（2026-11-13）：阶段一首版完成，Planner字�
 Planner阶段二、三首版状态（2026-11-13）：固定missing_data不再要求模型输出，代码补齐；
 已核实ChatTongyi使用function calling并迁移默认模式，保留PLANNER_OUTPUT_MODE=json。
 真实小样本各3/3首次校验通过，不等于稳定性改善或端到端语义验收。运行时契约/C1–C9不变。
+
+
+## Investment Strategy/Risk 后续范围（2026-11-13）
+
+已确认、尚未实现：V1先做风险约束检查与简单价格冲击压力测试；估值情景须先补盈利数据契约。
+V2评估组合优化、风险预算/风险平价、HRP与Black-Litterman。保持数据采集与Analytics职责分离，
+不变更报告C1–C9。详见[Strategy/Risk专题规格](investment-strategy-agent.md)。
+
+
+Strategy/Risk State方案（2026-11-13，已确认/待实现）：独立StrategyState，授权引用输入，
+可选持仓与显式用户约束/情景，规范结果经TaskResult交接；不继承父图完整状态，不信任LLM数值。
+详细字段及状态语义见[Strategy/Risk专题规格](investment-strategy-agent.md)。报告C1–C9保持不变。
+
+
+## Strategy/Risk V1 实施交付（2026-11-13）
+
+原先unsupported状态由本节覆盖：独立StrategyState/StrategyStore、两个确定性工具及有界ToolNode子图已接入。
+Planner strategy_parameters保留显式持仓/用户限制/情景，Supervisor仅交接直接数据依赖，
+父图与response_graph注入请求级策略存储，Composer/Streamlit展示规范结果和执行记录。
+数值从任务作用域内产物重建；报告C1–C9与内部节点未改。
+实施步骤与边界见[开发规格](strategy-agent-development.md)，契约见[专题规格](investment-strategy-agent.md)。
+
+
+Strategy回撤检查失败保护（2026-11-13）：有规范计算产物时解释失败降为partial并保留计算结果；
+无产物的技术失败仍failed。具体安全错误码与字段诊断进入执行记录。Strategy任务失败时Composer不代做约束判断，
+直接展示已有任务结果。详见Strategy专题的回撤约束链路失败保护记录，报告C1–C9不变。
+
+
+Strategy工具适用性（2026-11-13）：无约束/无情景的解释不绑定工具；V1已有工具由显式输入确定并经ToolNode执行。
+意外工具请求记录诊断、拒绝执行并使用既有有界输出修正，不取消授权检查。报告C1–C9不变。
+
+
+Strategy解释模型输出简化（2026-11-13）：模型schema移除artifact_ids，执行产物由代码选取；
+上游analysis引用仍经evidence_ids授权校验。引用错误提供字段诊断与分类可用ID清单，不放宽范围检查。
+详见Strategy专题的引用字段混淆复现记录，报告C1–C9不变。
+
+策略产品场景与工具扩展讨论归档（2026-11-13）：见[Strategy用户问题与扩展参考](strategy-user-questions-and-expansion.md)，
+包含六类问题、当前覆盖、基本面/公告/估值情景的建议优先级及未来验收样例；非新增实现承诺。
+
+Strategy已知缺陷状态更正（2026-11-13）：用户复测纯策略解释invalid_output仍存在，未解决，按用户要求暂缓。
+本地测试/模型抽样不替代该真实链路验收。已有修正保留，后续再处理；见[专题问题记录](investment-strategy-agent.md#未解决问题纯策略解释-invalid_output2026-11-13)。
+
+
+## 报告阅读与下载首版（2026-11-13）
+
+用户确认先做生成后立即阅读/下载：Streamlit新增报告阅读页签与Markdown/HTML下载，
+节点输出保持。覆盖此前“最终报告正文及下载隐藏”的当前UI策略，报告生成与C1–C9不变。
+会话最近结果复用，不重跑LLM，不提供长期链接或持久化。
+分享链接、外部存储、权限、PDF与云端部署作为后续扩展，详见[报告交付规格](report-delivery.md)。

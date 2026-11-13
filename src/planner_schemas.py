@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from typing_extensions import TypedDict
 from src.analytics_state import AnalyticsAssumptions
+from src.strategy_state import StrategyParameters
 
 TaskCategory = Literal["market_data", "analytics", "investment_strategy", "report"]
 
@@ -33,11 +34,14 @@ class PlanTask(BaseModel):
     question: str = Field(min_length=1)
     depends_on: list[str]
     analytics_parameters: AnalyticsTaskParameters | None = None
+    strategy_parameters: StrategyParameters | None = None
 
     @model_validator(mode="after")
     def parameters_match_category(self):
         if self.analytics_parameters is not None and self.category != "analytics":
             raise ValueError("analytics_parameters 仅用于 analytics 任务")
+        if self.strategy_parameters is not None and self.category != "investment_strategy":
+            raise ValueError("strategy_parameters仅用于investment_strategy任务")
         return self
 
 
@@ -96,7 +100,7 @@ class TaskPlan(BaseModel):
                 raise AnalyticsDependencyError(f"analytics 任务 {task.task_id} 必须直接依赖提供结构化数据的 market_data 或 analytics 任务")
 
     def to_state(self) -> dict:
-        return self.model_dump(exclude_none=True)
+        return self.model_dump(mode="json", exclude_none=True)
 
 
 class PlannerState(TypedDict, total=False):

@@ -45,12 +45,12 @@ def test_dependency_order_and_partial_evidence_handoff():
     assert state["supervisor_status"] == "partial"
 
 
-def test_unsupported_and_blocked_tasks_do_not_call_specialists():
+def test_strategy_missing_runtime_store_and_blocked_dependencies_do_not_call_market():
     graph, md, _ = build()
     state = graph.invoke({"plan": plan(task("a", "investment_strategy"), task("b", deps=["a"]), task("s", "investment_strategy"))})
-    assert state["task_results"]["a"]["status"] == "unsupported"
+    assert state["task_results"]["a"]["status"] == "failed"
     assert state["task_results"]["b"]["status"] == "blocked"
-    assert state["task_results"]["s"]["status"] == "unsupported"
+    assert state["task_results"]["s"]["status"] == "failed"
     md.invoke.assert_not_called()
 
 

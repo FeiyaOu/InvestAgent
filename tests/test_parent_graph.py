@@ -67,11 +67,11 @@ def test_invalid_user_input_does_not_call_models():
     md.invoke.assert_not_called(); planning.invoke.assert_not_called(); composing.invoke.assert_not_called()
 
 
-def test_mixed_tasks_keep_success_and_unavailable_capability():
+def test_mixed_tasks_keep_success_and_strategy_missing_evidence():
     result, _, _, _, _ = execute(plan(task(), task("a", "investment_strategy", ["m"])))
     assert result["supervisor_status"] == "partial"
-    assert result["task_results"]["a"]["status"] == "unsupported"
-    assert "尚未接入" in result["final_response"]
+    assert result["task_results"]["a"]["status"] == "partial"
+    assert "缺少" in result["final_response"]
 
 
 def test_stale_outputs_are_reset_and_graph_has_no_checkpointer():
@@ -94,7 +94,7 @@ def test_report_state_stays_in_task_payload_and_is_not_composed(valid_report):
         result = create_parent_graph(market_data_graph=market(), report_graph=report).invoke({
             "user_query": "生成新能源报告", "report_parameters": {"r": {"industry_focus": "光伏"}}})
     assert result["task_results"]["r"]["result"]["perception_data"] == {"detail": "kept"}
-    assert "暂时隐藏" in result["final_response"]
+    assert "报告阅读" in result["final_response"]
     composing.assert_not_called()
 
 
