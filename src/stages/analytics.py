@@ -103,6 +103,21 @@ def initialize(state: AnalyticsState, config: RunnableConfig) -> dict:
             _check_reuse_assumptions(ref, request.assumptions.model_dump())
     except (ValueError, KeyError, TypeError):
         return {**reset, **failure("invalid_reference", "数据集或分析引用无效、已过期或超出任务范围。")}
+    # Benchmark statistics require two distinct price datasets. Do not let the model
+    # invent an absent benchmark ID when upstream acquisition only partly succeeded.
+    comparison = any(word in request.task.lower() for word in
+        ("beta", "跟踪误差", "tracking error", "超额收益", "相对基准"))
+    price_refs = [ref for ref in refs if ref["kind"] == "price_history"]
+    if comparison and len({ref["symbol"] for ref in price_refs}) < 2 and not existing:
+        present = {ref["symbol"] for ref in price_refs}
+        missing_subjects = [symbol for symbol in request.subjects if symbol not in present]
+        missing = MissingDataRequest(kind="price_history", subjects=missing_subjects or request.subjects,
+            time_range=request.time_range, reason="基准比较需要标的与基准两份同区间价格数据；当前引用不足，未执行计算。")
+        result = AnalyticsResult(summary=missing.reason, findings=[], analysis_refs=[], chart_refs=[],
+            dataset_refs=refs, assumptions=request.assumptions.model_dump(), limitations=[],
+            missing_information=[missing.reason], missing_data_requests=[missing])
+        return {**reset, **request.model_dump(), "dataset_refs": refs, "status": "partial",
+                "result": result.model_dump(mode="json")}
     try:
         methodology = load_analytics_methodology()
     except (OSError, ValueError, UnicodeError):

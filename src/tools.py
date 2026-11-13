@@ -456,6 +456,17 @@ _STOCK_NAME_TO_CODE = {
 def _resolve_stock_code(query: str) -> str | None:
     """从名称或代码中解析出股票代码"""
     query = query.strip()
+    if not query:
+        return None
+    # Recognize complete exchange-qualified codes; never strip arbitrary digits from text.
+    import re
+    qualified = re.fullmatch(r"(?:(SH|SZ)\.?([0-9]{6})|([0-9]{6})\.(SH|SZ))", query.upper())
+    if qualified:
+        exchange = qualified.group(1) or qualified.group(4)
+        code = qualified.group(2) or qualified.group(3)
+        if (exchange == "SH" and code.startswith("6")) or (exchange == "SZ" and code.startswith(("0", "3"))):
+            return code
+        return None
     # 已是代码格式
     if query.isdigit() and len(query) == 6:
         return query
@@ -611,8 +622,23 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
                         df = df.rename(columns={"date": "日期", "close": "收盘", "open": "开盘",
                             "high": "最高", "low": "最低", "volume": "成交量"})
             else:
-                df = ak.index_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
-                                       end_date=end.strftime("%Y%m%d"))
+                try:
+                    df = ak.index_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
+                                           end_date=end.strftime("%Y%m%d"))
+                except Exception:
+                    df = None
+                if df is None or df.empty:
+                    # Restrict fallback to known market identifiers rather than guessing.
+                    sina_code = next((item[2] for item in _INDEXES if item[1] == code), None)
+                    if sina_code is None:
+                        return unavailable("index_source_unavailable", "指数主源不可用，尚未配置该指数备用市场代码。")
+                    df = ak.stock_zh_index_daily(symbol=sina_code)
+                    provider = "akshare/sina"
+                    if df is not None and not df.empty:
+                        df = df.rename(columns={"date": "日期", "close": "收盘", "open": "开盘",
+                            "high": "最高", "low": "最低"}).copy()
+                        dates = pd.to_datetime(df["日期"], errors="raise").dt.date
+                        df = df.loc[(dates >= start) & (dates <= end)]
         else:
             days = pd.bdate_range(start, end)
             df = pd.DataFrame({"日期": days, "收盘": [100. + i * .1 for i in range(len(days))]})

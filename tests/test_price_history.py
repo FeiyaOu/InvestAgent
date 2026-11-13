@@ -122,3 +122,27 @@ def test_history_failure_reports_safe_exception_class(monkeypatch):
         result = fetch(DatasetStore())
     assert 'TimeoutError' in result['error']['message']
     assert 'secret' not in str(result)
+
+
+def test_common_exchange_code_formats_are_normalized(monkeypatch):
+    monkeypatch.setenv('USE_REAL_DATA', 'true')
+    provider = Mock(); provider.stock_zh_a_hist.return_value = frame()
+    with patch.dict(sys.modules, {'akshare': provider}):
+        for code in ('600519.SH', 'sh600519', 'SH.600519', '600519.sh'):
+            result = fetch(DatasetStore(), query=code)
+            assert result['status'] == 'available', code
+            assert result['dataset_ref']['symbol'] == '600519'
+        assert fetch(DatasetStore(), query='600519.SZ')['status'] == 'unavailable'
+
+
+def test_index_sina_fallback_filters_full_history(monkeypatch):
+    monkeypatch.setenv('USE_REAL_DATA', 'true')
+    provider = Mock(); provider.index_zh_a_hist.side_effect = ConnectionError()
+    provider.stock_zh_index_daily.return_value = pd.DataFrame({'date': ['2024-12-31', '2025-01-02', '2025-01-03'], 'close': [90., 100., 110.]})
+    store = DatasetStore()
+    with patch.dict(sys.modules, {'akshare': provider}):
+        result = fetch(store, query='000300', asset_type='index', adjustment='none')
+    assert result['status'] == 'available'
+    assert result['dataset_ref']['row_count'] == 2
+    assert result['dataset_ref']['provider'] == 'akshare/sina'
+    provider.stock_zh_index_daily.assert_called_once_with(symbol='sh000300')

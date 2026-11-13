@@ -270,3 +270,12 @@ def test_valuation_references_cannot_be_dismissed_without_computation():
     assert result['status'] == 'completed'
     assert result['tool_calls_used'] == 1
     assert result['result']['findings'][0]['metrics']['pe_ttm.median'] == 22.
+
+
+def test_missing_benchmark_returns_requirement_without_model_guessing_id():
+    _, _, ref, config = setup_data()
+    result, llm = run([], {'task': '比较茅台相对沪深300的Beta、相关系数和跟踪误差',
+        'dataset_refs': [ref.model_dump(mode='json')], 'subjects': ['600519', '000300']}, config)
+    assert result['status'] == 'partial'
+    assert result['result']['missing_data_requests'][0]['kind'] == 'price_history'
+    llm.invoke.assert_not_called()
