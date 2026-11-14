@@ -46,13 +46,14 @@
 页面展示任务分类、依赖、终止状态、数据证据与回答。
 任务完成即可展示，模型汇总随后返回；不把 partial 或 unsupported 冒充完全成功。
 报告四字段 perception_data / world_model / reasoning_plans / selected_plan 按报告任务分别显示。
-最终报告正文、下载与评估继续隐藏，后端仍生成和校验报告。
+报告中心提供最终报告正文阅读与 Markdown/HTML 下载（见文末报告阅读与下载首版）；评估结果仍不在 UI 展示。
 Supervisor 发出 task_started 自定义事件标识 task_id/category，供顺序执行时关联内部节点事件。
 子图消息不写入父状态，UI 不使用 get_state() 或 MemorySaver。
 
 ## 工具与数据边界
 
-Market Data 首版复用 src/tools.py 的五个工具（行业、指数、宏观、新闻、个股）。
+Market Data 使用 src/tools.py 的七个工具：INVEST_TOOLS 五个文本工具（行业、指数、宏观、新闻、个股），
+以及结构化采集工具 get_price_history、get_valuation_snapshot（写入请求级 DatasetStore，供 Analytics 引用）。
 AKShare 访问只在工具层，异常必须 fallback；模拟模式必须明确标记。
 历史价格、财务与量化扩展仍以演进规格为准，不因 UI 迁移自动新增。
 

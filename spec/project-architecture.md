@@ -48,7 +48,7 @@ perception → modeling → reasoning → decision → report → validator
 节点函数、prompt、工具调用、输出格式与实际校验重试行为保持不变。
 校验只通过 validate_report()；C1–C7 见 [主规格](invest_spec.md)。
 工具 fallback 和模拟标记保留。AKShare 只在 src/tools.py 调用。
-Market Data 复用五个现有工具，不自动提供尚未实现的结构化历史/财务分析能力。
+Market Data 使用五个文本工具及 get_price_history / get_valuation_snapshot 两个结构化采集工具；财务报表等未实现能力不自动提供。
 报告参数缺失时当前适配仍用完整任务描述，准确抽取主题/行业/时间是待完善事项。
 
 ## 4. 展示和可观测性
@@ -57,7 +57,7 @@ Streamlit 直接调用父图，无独立 HTTP 后端。
 通过 updates + custom / subgraphs=True 消费事件，task_started 标识子图所属任务。
 只将根事件合并到父级快照，任务结果与报告进度单独展示；不调用 get_state()。
 页面显示任务列表、数据证据、分析状态、每个报告的四节点输出和执行记录。
-最终报告正文/下载/评估仍隐藏；后续阅读视图使用 Streamlit + Plotly（见演进规格第 7 节）。
+最终报告正文与 Markdown/HTML 下载见报告中心（见下文报告交付展示层）；评估结果仍不在 UI 展示。
 LangFuse 回调可选，未配置时不影响运行；追踪不等于会话持久化。
 
 ## 5. 入口与验证

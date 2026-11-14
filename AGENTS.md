@@ -19,6 +19,8 @@
 | `src/agent.py` | 公共门面（调用 parent_graph.py，无旧 Reactive 路径）|
 | `src/parent_graph.py` | 父图接线，ParentState 与 TaskResult 见同目录对应文件 |
 | `spec/strategy-agent-development.md` | Strategy/Risk实施步骤与验收记录 |
+| `spec/analytics-agent.md` / `spec/report-delivery.md` | Analytics 实施规格 / 报告阅读与下载 |
+| `spec/workflow-evolution.md` | 工作流演进与历次决策记录（进展常比主规格更新）|
 | `src/schemas.py` | 原报告 Pydantic 模型|
 | `src/tools.py` | AKShare 工具函数（`@tool` 装饰器，含 fallback）|
 | `src/stages/reporter.py` | `validate_report()`（唯一报告校验入口）|
