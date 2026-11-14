@@ -20,6 +20,8 @@
 ```
 
 任务按能力与产物分类，不按整条消息复杂度二选一；只有明确报告请求产生 report 任务。
+明确否定报告生成（包括“不生成报告”“不写报告”“不要生成报告”）时，计划不得包含 report 任务；
+否定词只作用于对应的报告生成措辞，不把“不需要查价格，请生成报告”等独立请求误判为禁止报告。
 父级采用 ParentState，task_results 按 task_id 保存统一 TaskResult；
 报告 final_report、四节点输出均在对应任务 result 内，父级不提供顶层 processing_mode / final_report。
 原 assess_query、Reactive 工具循环和回答提取节点已删除。

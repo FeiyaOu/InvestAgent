@@ -283,9 +283,17 @@ def test_report_intent_mismatch_never_executes_wrong_ready_plan():
     assert 'report_intent' in result['planning_error']['message']
 
 
-def test_explicit_no_report_rejects_report_but_analysis_is_allowed():
-    result,_=invoke([plan([task('r','report')]),plan()],{'user_query':'分析光伏风险，不要生成完整报告。'})
+@pytest.mark.parametrize('query', ['分析光伏风险，不要生成完整报告。', '分析光伏风险，不生成报告。'])
+def test_explicit_no_report_rejects_report_but_analysis_is_allowed(query):
+    result,_=invoke([plan([task('r','report')]),plan()],{'user_query':query})
     assert result['planning_status']=='ready' and result['planning_attempts']==2
+
+
+def test_plain_negation_does_not_force_report_into_valid_analysis_plan():
+    result, chain = invoke([plan()], {'user_query': '比较茅台和五粮液机会与风险，不生成报告。'})
+    assert result['planning_status'] == 'ready'
+    assert result['planning_attempts'] == 1
+    assert chain.invoke.call_count == 1
 
 
 @pytest.mark.parametrize('query,expected',[
@@ -295,6 +303,10 @@ def test_explicit_no_report_rejects_report_but_analysis_is_allowed():
     ('请解释如何生成投研报告。','unspecified'),
     ('比较两家公司估值并分析机会。','unspecified'),
     ('暂不生成报告，先查价格。','forbidden'),
+    ('分析机会与风险，不生成报告。','forbidden'),
+    ('不生成完整投研报告，只回答问题。','forbidden'),
+    ('不写报告。','forbidden'),
+    ('不需要查价格，请生成报告。','requested'),
 ])
 def test_explicit_report_intent_handles_negation_and_explanation(query,expected):
     from src.report_intent import explicit_report_intent
