@@ -1,7 +1,8 @@
 import pytest
 from pydantic import ValidationError
-from src.planner_schemas import TaskPlan
-from src.validation_diagnostics import validation_diagnostics
+
+from src.core.validation_diagnostics import validation_diagnostics
+from src.orchestration.planner_schemas import TaskPlan
 
 
 def test_diagnostics_identify_type_without_exposing_values():
@@ -21,7 +22,7 @@ def test_diagnostics_identify_type_without_exposing_values():
 
 @pytest.mark.parametrize('value,kind', [('private', 'str'), (['private'], 'list'), (42, 'int')])
 def test_assumptions_invalid_types_are_distinguished(value, kind):
-    from src.planner_schemas import AnalyticsTaskParameters
+    from src.orchestration.planner_schemas import AnalyticsTaskParameters
     with pytest.raises(ValidationError) as caught:
         AnalyticsTaskParameters.model_validate({'assumptions': value})
     row = validation_diagnostics(caught.value, stage='planner', attempt=1)[0]

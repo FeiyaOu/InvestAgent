@@ -9,7 +9,7 @@
 **AKShare 只在工具层调用，后续推理阶段不再碰外部数据。**
 
 数据收集（感知阶段 + Reactive 工具）与分析推理（建模/推理/决策/报告）严格分离。
-如果需要替换数据源（如接入 Wind、Tushare），只需修改 `src/tools.py`，Agent 架构不变。
+如果需要替换数据源（如接入 Wind、Tushare），只需修改 `src/data/tools.py`，Agent 架构不变。
 
 ---
 
@@ -17,7 +17,7 @@
 
 ### 路径一：Deliberative 路径 — 感知阶段直接调用
 
-`src/stages/perception.py` 在调用 LLM 之前，**确定性地调用全部4个工具**，无需 LLM 决策：
+`src/specialists/report/stages/perception.py` 在调用 LLM 之前，**确定性地调用全部4个工具**，无需 LLM 决策：
 
 ```python
 def perception(state: InvestAgentState) -> dict:
@@ -122,7 +122,7 @@ AKShare 完全免费、无需 API key，直接 `pip install akshare` 即用。
 
 **如何替换为其他数据源？**
 
-只需修改 `src/tools.py` 中各工具函数的实现体，保持函数签名和返回格式（字符串）不变，Agent 架构完全不需要修改。LangGraph 的工具协议与数据来源无关。
+只需修改 `src/data/tools.py` 中各工具函数的实现体，保持函数签名和返回格式（字符串）不变，Agent 架构完全不需要修改。LangGraph 的工具协议与数据来源无关。
 
 **后4个阶段为什么不再调 AKShare？**
 

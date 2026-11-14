@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src import llm
+from src.core import llm
 
 _FAKE_KEY = "sk-test"  # conftest 已清除真实 key，ChatTongyi 构造时必须有 key
 

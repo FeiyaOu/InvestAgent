@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.analytics_artifacts import AnalysisArtifact
-from app.analytics_dashboard import build_analysis_figures, resolve_artifact, format_metric
+from app.analytics_dashboard import build_analysis_figures, format_metric, resolve_artifact
+from src.specialists.analytics.artifacts import AnalysisArtifact
 
 
 def artifact(**updates):
@@ -56,3 +56,37 @@ def test_snapshot_resolution_is_task_scoped_and_checks_identity():
 
 def test_empty_series_and_table_do_not_create_placeholder_charts():
     assert build_analysis_figures(artifact(series={})) == []
+
+
+def test_peer_tables_group_by_dimension_and_show_position_only():
+    from app.analytics_dashboard import build_peer_tables
+    table = [{"symbol": "600519", "dimension": "valuation", "factor": "pe_ttm", "raw_value": 30., "z_score": 1.2,
+              "percentile": .8, "valid_count": 5, "excluded_reason": None},
+             {"symbol": "000858", "dimension": "valuation", "factor": "pe_ttm", "raw_value": -3., "z_score": None,
+              "percentile": None, "valid_count": 5, "excluded_reason": "非正PE"},
+             {"symbol": "600519", "dimension": "technical", "factor": "rsi", "raw_value": 55., "z_score": None,
+              "percentile": None, "valid_count": 3, "excluded_reason": None}]
+    tables = build_peer_tables(table)
+    assert set(tables) == {"valuation", "technical"}
+    rows = {row["标的"]: row for row in tables["valuation"]}
+    assert rows["600519"]["pe_ttm"] == "z=1.20 · 80%"
+    assert rows["000858"]["pe_ttm"] == "不可比"
+
+
+def test_return_matrix_correlation_heatmap_uses_table_values():
+    data = AnalysisArtifact(analysis_id="m1", tool_name="build_return_matrix", dataset_refs=[],
+        created_at=datetime.now(timezone.utc), start_date="2025-01-01", end_date="2025-06-30", sample_size=120,
+        series={}, metrics={}, metric_units={}, assumptions={}, limitations=[], table=[
+        {"symbol_a": "600519", "symbol_b": "600519", "correlation": 1.0},
+        {"symbol_a": "600519", "symbol_b": "000858", "correlation": .6},
+        {"symbol_a": "000858", "symbol_b": "000858", "correlation": 1.0}])
+    figures = dict(build_analysis_figures(data))
+    heat = figures["correlation"].data[0]
+    assert list(heat.x) == ["600519", "000858"] and heat.z[0][1] == .6 and heat.z[1][0] == .6
+
+
+def test_peer_table_labels_include_security_name():
+    from app.analytics_dashboard import build_peer_tables
+    tables = build_peer_tables([{"symbol": "600809", "security_name": "山西汾酒", "dimension": "valuation",
+        "factor": "pb", "raw_value": 7., "z_score": .5, "percentile": .6, "valid_count": 5, "excluded_reason": None}])
+    assert tables["valuation"][0]["标的"] == "600809 山西汾酒"

@@ -47,11 +47,11 @@ V1风险限制首批支持单股仓位及已有单股风险指标阈值；组合
 
 | 步骤 | 实际交付 |
 |---|---|
-| 契约 | src/strategy_state.py，Portfolio/RiskConstraints/PriceScenario/StrategyInput/Answer/Result/State |
-| 产物 | src/strategy_artifacts.py，线程安全、按scope校验、输入快照绑定、请求级存储 |
-| 工具 | src/strategy_tools.py，两个确定性工具，工具schema不向模型暴露运行时输入 |
-| 子图 | src/strategy_agent.py + src/stages/strategy.py，固定methodology、有界循环与无工具修正 |
-| 交接 | src/strategy_handoff.py，规范引用重建、直接依赖授权、结果数值重建 |
+| 契约 | src/specialists/strategy/state.py，Portfolio/RiskConstraints/PriceScenario/StrategyInput/Answer/Result/State |
+| 产物 | src/specialists/strategy/artifacts.py，线程安全、按scope校验、输入快照绑定、请求级存储 |
+| 工具 | src/specialists/strategy/tools.py，两个确定性工具，工具schema不向模型暴露运行时输入 |
+| 子图 | src/specialists/strategy/agent.py + src/specialists/strategy/nodes.py，固定methodology、有界循环与无工具修正 |
+| 交接 | src/specialists/strategy/handoff.py，规范引用重建、直接依赖授权、结果数值重建 |
 | 父图 | Supervisor/parent_graph/response_graph及Planner strategy_parameters接入 |
 | 展示 | Composer确定性回退、app/strategy_dashboard.py、Strategy/Risk内部执行记录 |
 | 验收 | 契约/工具/边界/子图/父图/AppTest回归及结构lint；真实模型假设组合抽查成功 |

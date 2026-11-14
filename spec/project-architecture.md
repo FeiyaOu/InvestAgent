@@ -16,10 +16,10 @@ Planner 产生四类任务和依赖。Supervisor 是确定性顺序调度图，�
 
 | 类别 | 实现 | 当前状态 |
 |---|---|---|
-| market_data | src/market_data_agent.py | 已接入，工具循环与输出验证 |
-| analytics | src/analytics_agent.py | 已接入调度、分析汇总与 Plotly 看板 |
-| investment_strategy | src/strategy_agent.py | V1已接入：证据解释、约束与静态压力测试 |
-| report | src/report_graph.py | 已接入，原六节点流程 |
+| market_data | src/specialists/market_data/agent.py | 已接入，工具循环与输出验证 |
+| analytics | src/specialists/analytics/agent.py | 已接入调度、分析汇总与 Plotly 看板 |
+| investment_strategy | src/specialists/strategy/agent.py | V1已接入：证据解释、约束与静态压力测试 |
+| report | src/specialists/report/graph.py | 已接入，原六节点流程 |
 
 独立任务依次执行；依赖任务等待前置结果。partial 可传递可用证据，失败依赖阻断下游。
 已完成任务结果先供 UI 展示，再由 Composer 汇总；不进行无界重试或动态重新规划。
@@ -47,8 +47,8 @@ perception → modeling → reasoning → decision → report → validator
 
 节点函数、prompt、工具调用、输出格式与实际校验重试行为保持不变。
 校验只通过 validate_report()；C1–C7 见 [主规格](invest_spec.md)。
-工具 fallback 和模拟标记保留。AKShare 只在 src/tools.py 调用。
-Market Data 复用五个现有工具，不自动提供尚未实现的结构化历史/财务分析能力。
+工具 fallback 和模拟标记保留。AKShare 只在 src/data/tools.py 调用。
+Market Data 使用五个文本工具及 get_price_history / get_valuation_snapshot 两个结构化采集工具；财务报表等未实现能力不自动提供。
 报告参数缺失时当前适配仍用完整任务描述，准确抽取主题/行业/时间是待完善事项。
 
 ## 4. 展示和可观测性
@@ -57,7 +57,7 @@ Streamlit 直接调用父图，无独立 HTTP 后端。
 通过 updates + custom / subgraphs=True 消费事件，task_started 标识子图所属任务。
 只将根事件合并到父级快照，任务结果与报告进度单独展示；不调用 get_state()。
 页面显示任务列表、数据证据、分析状态、每个报告的四节点输出和执行记录。
-最终报告正文/下载/评估仍隐藏；后续阅读视图使用 Streamlit + Plotly（见演进规格第 7 节）。
+最终报告正文与 Markdown/HTML 下载见报告中心（见下文报告交付展示层）；评估结果仍不在 UI 展示。
 LangFuse 回调可选，未配置时不影响运行；追踪不等于会话持久化。
 
 ## 5. 入口与验证
@@ -159,3 +159,26 @@ app/report_viewer.py消费已生成final_report，复用validate_report，提供
 UI当前导航（2026-11-13）：产品层为回答、数据与分析、报告中心；默认收起的开发者调试层含规划调度、
 专家记录与报告生成过程。app/example_queries.py提供六条默认示例、边界问题及上海日期生成；点击不会自动执行。
 原流式更新/请求内快照保留，详见报告交付规格。
+
+
+## src 目录重排（2026-11-14）
+
+按领域分包，纯结构调整，不改任何逻辑：core（llm/datasets/errors/validation_diagnostics）、
+data（AKShare tools）、orchestration（父图/planner/supervisor/composer/契约）、
+specialists/{market_data,analytics,strategy,report}。原 src/stages 拆入 orchestration 与各 specialist。
+TaskError 移至 core/errors.py，使 specialists 不反向依赖 orchestration。各节文件路径已按新结构更新。
+
+
+## 分析与策略能力升级规划（2026-11-14，阶段 1 已实现，待真实数据验收）
+
+用户确认三阶段升级：阶段 1 技术因子/PS/批量采集/收益矩阵/同行 z-score/组合 VaR·CVaR/历史情景重演；
+阶段 2 最小方差与风险平价优化及调仓清单；阶段 3 经 AKShare 接口实测后接入财务、机构持仓与研报评级表。
+专家分工不变，契约与验收见[分析与策略能力升级规格](analysis-strategy-upgrade.md)。
+
+
+## Streamlit 界面改版（2026-11-14）
+
+参照 frontend/ 中的 Figma 导出原型改版现有 Streamlit，不引入独立前端或 HTTP 后端。
+主题在 `.streamlit/config.toml`；静态外观在 `app/ui_shell.py`（自有 `zh-*` 样式类，内部选择器仅用 `st-key-*`）；
+进度面板由 `app/progress.py` 纯函数从真实规划与任务事件推导。原型中的置信度、领先方、已交叉验证、
+超出现有能力的示例与“数据服务正常”均未采用。持久化（历史、报告库、收藏）与 PDF 不在本次范围。

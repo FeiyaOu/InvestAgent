@@ -11,9 +11,9 @@ Harness Engineering 核心理念的实践：
     python linters/check_agent_structure.py
 
 检查项：
-    1. src/stages/reporter.py 中必须包含 validate_report 函数
-    2. src/stages/reporter.py 中必须定义 REQUIRED_DIMENSIONS 常量（含全部4个维度）
-    3. src/planner_schemas.py 定义四类 TaskCategory（C8）
+    1. src/specialists/report/stages/reporter.py 中必须包含 validate_report 函数
+    2. src/specialists/report/stages/reporter.py 中必须定义 REQUIRED_DIMENSIONS 常量（含全部4个维度）
+    3. src/orchestration/planner_schemas.py 定义四类 TaskCategory（C8）
     4. src/agent.py 中必须包含 create_invest_agent 函数
     5. 5个 stage 节点函数必须存在于对应模块（perception/modeling/reasoning/decision/report_generation）
     6. spec/invest_spec.md 必须存在
@@ -67,14 +67,14 @@ def _source_contains(path: Path, text: str) -> bool:
 # ============================================================
 
 def check_validate_report(root: Path) -> list[str]:
-    reporter = root / "src" / "stages" / "reporter.py"
+    reporter = root / "src" / "specialists" / "report" / "stages" / "reporter.py"
     tree, errors = _parse_source(reporter)
     if errors:
         return errors
 
     if "validate_report" not in _get_func_names(tree):
         return [
-            "ERROR: src/stages/reporter.py 缺少 validate_report() 函数。\n"
+            "ERROR: src/specialists/report/stages/reporter.py 缺少 validate_report() 函数。\n"
             "FIX: 添加 def validate_report(report: dict) -> list[dict] 函数，\n"
             "     逐条检查 spec/invest_spec.md 中的约束条件 C1–C7。\n"
         ]
@@ -86,7 +86,7 @@ def check_validate_report(root: Path) -> list[str]:
 # ============================================================
 
 def check_required_dimensions(root: Path) -> list[str]:
-    reporter = root / "src" / "stages" / "reporter.py"
+    reporter = root / "src" / "specialists" / "report" / "stages" / "reporter.py"
     tree, errors = _parse_source(reporter)
     if errors:
         return errors
@@ -94,7 +94,7 @@ def check_required_dimensions(root: Path) -> list[str]:
     source = reporter.read_text(encoding="utf-8")
     if "REQUIRED_DIMENSIONS" not in source:
         return [
-            "ERROR: src/stages/reporter.py 缺少 REQUIRED_DIMENSIONS 常量。\n"
+            "ERROR: src/specialists/report/stages/reporter.py 缺少 REQUIRED_DIMENSIONS 常量。\n"
             "FIX: 添加 REQUIRED_DIMENSIONS = ['fundamental', 'market', 'news', 'analyst']，\n"
             "     确保与 spec/invest_spec.md 中的维度定义一致。\n"
         ]
@@ -115,7 +115,7 @@ def check_required_dimensions(root: Path) -> list[str]:
 # ============================================================
 
 def check_task_categories(root: Path) -> list[str]:
-    source_file = root / "src" / "planner_schemas.py"
+    source_file = root / "src" / "orchestration" / "planner_schemas.py"
     tree, errors = _parse_source(source_file)
     if errors:
         return errors
@@ -152,11 +152,11 @@ def check_create_invest_agent(root: Path) -> list[str]:
 # ============================================================
 
 STAGE_FUNCTIONS = {
-    "src/stages/perception.py": "perception",
-    "src/stages/modeling.py": "modeling",
-    "src/stages/reasoning.py": "reasoning",
-    "src/stages/decision.py": "decision",
-    "src/stages/reporter.py": "report_generation",
+    "src/specialists/report/stages/perception.py": "perception",
+    "src/specialists/report/stages/modeling.py": "modeling",
+    "src/specialists/report/stages/reasoning.py": "reasoning",
+    "src/specialists/report/stages/decision.py": "decision",
+    "src/specialists/report/stages/reporter.py": "report_generation",
 }
 
 

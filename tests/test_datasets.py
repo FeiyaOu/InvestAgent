@@ -1,9 +1,10 @@
 """Dataset contracts/storage: deterministic and request-scoped, no APIs."""
 from datetime import date, datetime, timezone
+
 import pytest
 from pydantic import ValidationError
 
-from src.datasets import DatasetStore, PriceDataset, ValuationDataset
+from src.core.datasets import DatasetStore, PriceDataset, ValuationDataset
 
 
 def prices(**updates):
@@ -97,8 +98,38 @@ def test_rejects_valuation_lookahead_units_and_unexplained_missing(updates):
 
 
 def test_json_reference_roundtrip_and_unadjusted_benchmark():
-    from src.datasets import DatasetRef
+    from src.core.datasets import DatasetRef
     store = DatasetStore()
     ref = store.put(prices(symbol="000300", asset_type="index", adjustment="none", volume_unit="not_available"))
     assert DatasetRef.model_validate_json(ref.model_dump_json()) == ref
     assert store.get(ref.dataset_id).asset_type == "index"
+
+
+def test_turnover_is_fraction_with_explicit_unit_and_carried_on_reference():
+    rows = [{"date": date(2026, 11, 9), "close": 100.0, "turnover": 0.012},
+            {"date": date(2026, 11, 10), "close": 110.0, "turnover": None}]
+    dataset = PriceDataset.model_validate(prices(rows=rows, turnover_unit="fraction"))
+    assert dataset.rows[0].turnover == 0.012
+    assert DatasetStore().put(dataset).turnover_unit == "fraction"
+    assert PriceDataset.model_validate(prices()).turnover_unit == "not_available"
+
+
+@pytest.mark.parametrize("updates", [
+    {"rows": [{"date": date(2026, 11, 10), "close": 1.0, "turnover": 0.01}]},  # value without unit
+    {"rows": [{"date": date(2026, 11, 10), "close": 1.0, "turnover": -0.01}], "turnover_unit": "fraction"},
+    {"turnover_unit": "percent"},
+])
+def test_rejects_unitless_negative_or_unknown_turnover(updates):
+    with pytest.raises(ValidationError):
+        PriceDataset.model_validate(prices(**updates))
+
+
+def test_ps_ttm_is_a_multiple():
+    base = {"kind": "valuation_snapshot", "symbol": "600519", "market": "SSE", "currency": "CNY",
+            "provider": "test", "retrieved_at": datetime.now(timezone.utc), "data_mode": "real",
+            "as_of_date": date(2026, 11, 10)}
+    data = ValuationDataset.model_validate({**base, "metrics": {
+        "ps_ttm": {"value": 8.5, "unit": "multiple", "basis": "PS_TTM"}}})
+    assert data.metrics["ps_ttm"].value == 8.5
+    with pytest.raises(ValidationError):
+        ValuationDataset.model_validate({**base, "metrics": {"ps_ttm": {"value": 8.5, "unit": "percent"}}})

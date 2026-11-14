@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from src.datasets import DatasetStore
-from src.tools import get_price_history
+from src.core.datasets import DatasetStore
+from src.data.tools import get_price_history, get_price_history_batch
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +17,7 @@ def isolated_sina_uses_mock_provider(monkeypatch):
         import akshare
         assert isinstance(akshare, Mock), "unit test must mock AKShare"
         return getattr(akshare, function)(**kwargs)
-    monkeypatch.setattr("src.tools._call_sina", invoke)
+    monkeypatch.setattr("src.data.tools._call_sina", invoke)
 
 
 def fetch(store, **updates):
@@ -33,7 +33,8 @@ def frame():
 
 def test_history_registers_dataset_and_returns_reference_not_rows(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.return_value = frame()
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame()
     store = DatasetStore()
     with patch.dict(sys.modules, {"akshare": provider}):
         result = fetch(store)
@@ -49,7 +50,8 @@ def test_history_registers_dataset_and_returns_reference_not_rows(monkeypatch):
 
 def test_index_history_has_points_and_no_invented_volume(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.index_zh_a_hist.return_value = frame()
+    provider = Mock()
+    provider.index_zh_a_hist.return_value = frame()
     store = DatasetStore()
     with patch.dict(sys.modules, {"akshare": provider}):
         result = fetch(store, query="000300", asset_type="index", adjustment="none")
@@ -61,7 +63,8 @@ def test_index_history_has_points_and_no_invented_volume(monkeypatch):
 
 def test_errors_do_not_register_data_or_fabricate_success(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.side_effect = RuntimeError("secret")
+    provider = Mock()
+    provider.stock_zh_a_hist.side_effect = RuntimeError("secret")
     with patch.dict(sys.modules, {"akshare": provider}):
         for updates in ({}, {"start_date": "bad"}, {"query": "腾讯"},
                         {"start_date": "2025-02-01"}, {"asset_type": "index", "adjustment": "qfq"}):
@@ -73,7 +76,8 @@ def test_errors_do_not_register_data_or_fabricate_success(monkeypatch):
 
 def test_invalid_provider_rows_fail_validation(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.return_value = frame().iloc[::-1]
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame().iloc[::-1]
     with patch.dict(sys.modules, {"akshare": provider}):
         result = fetch(DatasetStore())
     assert result["status"] == "unavailable"
@@ -96,7 +100,8 @@ def test_missing_store_is_explicit_failure():
 
 def test_no_data_does_not_fall_back_to_fake_rows(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.return_value = pd.DataFrame()
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = pd.DataFrame()
     with patch.dict(sys.modules, {"akshare": provider}):
         assert fetch(DatasetStore())["error"]["type"] == "no_data"
 
@@ -137,7 +142,8 @@ def test_history_failure_reports_safe_exception_class(monkeypatch):
 
 def test_common_exchange_code_formats_are_normalized(monkeypatch):
     monkeypatch.setenv('USE_REAL_DATA', 'true')
-    provider = Mock(); provider.stock_zh_a_hist.return_value = frame()
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame()
     with patch.dict(sys.modules, {'akshare': provider}):
         for code in ('600519.SH', 'sh600519', 'SH.600519', '600519.sh'):
             result = fetch(DatasetStore(), query=code)
@@ -148,7 +154,8 @@ def test_common_exchange_code_formats_are_normalized(monkeypatch):
 
 def test_index_sina_fallback_filters_full_history(monkeypatch):
     monkeypatch.setenv('USE_REAL_DATA', 'true')
-    provider = Mock(); provider.index_zh_a_hist.side_effect = ConnectionError()
+    provider = Mock()
+    provider.index_zh_a_hist.side_effect = ConnectionError()
     provider.stock_zh_index_daily.return_value = pd.DataFrame({'date': ['2024-12-31', '2025-01-02', '2025-01-03'], 'close': [90., 100., 110.]})
     store = DatasetStore()
     with patch.dict(sys.modules, {'akshare': provider}):
@@ -157,3 +164,99 @@ def test_index_sina_fallback_filters_full_history(monkeypatch):
     assert result['dataset_ref']['row_count'] == 2
     assert result['dataset_ref']['provider'] == 'akshare/sina'
     provider.stock_zh_index_daily.assert_called_once_with(symbol='sh000300')
+
+
+def test_eastmoney_turnover_percent_is_normalized_to_fraction(monkeypatch):
+    monkeypatch.setenv("USE_REAL_DATA", "true")
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame().assign(换手率=[1.25, None])
+    store = DatasetStore()
+    with patch.dict(sys.modules, {"akshare": provider}):
+        result = fetch(store)
+    assert result["dataset_ref"]["turnover_unit"] == "fraction"
+    data = store.get(result["dataset_ref"]["dataset_id"])
+    assert data.rows[0].turnover == pytest.approx(0.0125)
+    assert data.rows[1].turnover is None  # Missing stays missing; no volume-based inference.
+
+
+def test_sina_turnover_is_already_a_fraction(monkeypatch):
+    monkeypatch.setenv("USE_REAL_DATA", "true")
+    provider = Mock()
+    provider.stock_zh_a_hist.side_effect = ConnectionError("down")
+    provider.stock_zh_a_daily.return_value = pd.DataFrame({"date": ["2025-01-02", "2025-01-03"],
+        "close": [100., 110.], "volume": [200., 300.], "turnover": [0.004, 0.006]})
+    store = DatasetStore()
+    with patch.dict(sys.modules, {"akshare": provider}):
+        result = fetch(store)
+    data = store.get(result["dataset_ref"]["dataset_id"])
+    assert data.turnover_unit == "fraction"
+    assert data.rows[1].turnover == pytest.approx(0.006)
+
+
+def test_turnover_unavailable_without_column_or_for_index(monkeypatch):
+    monkeypatch.setenv("USE_REAL_DATA", "true")
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame()
+    provider.index_zh_a_hist.return_value = frame().assign(换手率=[1., 2.])
+    with patch.dict(sys.modules, {"akshare": provider}):
+        stock = fetch(DatasetStore())
+        index = fetch(DatasetStore(), query="000300", asset_type="index", adjustment="none")
+    assert stock["dataset_ref"]["turnover_unit"] == "not_available"
+    assert index["dataset_ref"]["turnover_unit"] == "not_available"
+
+
+def fetch_batch(store, **updates):
+    args = {"queries": ["600519", "000858"], "start_date": "2025-01-02", "end_date": "2025-01-03",
+            "asset_type": "stock", "adjustment": "qfq", **updates}
+    return json.loads(get_price_history_batch.invoke(args, config={"configurable": {"dataset_store": store}}))
+
+
+def test_batch_registers_one_dataset_per_symbol_in_a_single_call(monkeypatch):
+    monkeypatch.setenv("USE_REAL_DATA", "true")
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame()
+    store = DatasetStore()
+    with patch.dict(sys.modules, {"akshare": provider}):
+        result = fetch_batch(store, queries=["600519", "000858", "600036"])
+    assert result["status"] == "available"
+    symbols = [store.get(item["dataset_ref"]["dataset_id"]).symbol for item in result["items"]]
+    assert symbols == ["600519", "000858", "600036"]
+    assert all("rows" not in item["dataset_ref"] for item in result["items"])
+
+
+def test_batch_partial_failure_keeps_successful_symbols_and_flags_missing(monkeypatch):
+    monkeypatch.setenv("USE_REAL_DATA", "true")
+    provider = Mock()
+    def history(symbol, **kwargs):
+        if symbol == "000858":
+            raise RuntimeError("secret upstream")
+        return frame()
+    provider.stock_zh_a_hist.side_effect = history
+    provider.stock_zh_a_daily.return_value = pd.DataFrame()
+    store = DatasetStore()
+    with patch.dict(sys.modules, {"akshare": provider}):
+        result = fetch_batch(store)
+    assert result["status"] == "partial"
+    ok, failed = result["items"]
+    assert ok["status"] == "available" and store.get(ok["dataset_ref"]["dataset_id"])
+    assert failed["status"] == "unavailable" and "dataset_ref" not in failed
+    assert "无法获取" in " ".join(result["limitations"])
+    assert "secret" not in json.dumps(result, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("queries", [["600519"], ["600519", "600519"], [f"{600000 + i}" for i in range(21)]])
+def test_batch_rejects_bad_symbol_lists_without_registering(queries):
+    store = DatasetStore()
+    result = fetch_batch(store, queries=queries)
+    assert result["status"] == "unavailable"
+    assert not store._datasets
+
+
+def test_batch_all_failures_are_unavailable(monkeypatch):
+    monkeypatch.setenv("USE_REAL_DATA", "true")
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = pd.DataFrame()
+    provider.stock_zh_a_daily.return_value = pd.DataFrame()
+    with patch.dict(sys.modules, {"akshare": provider}):
+        result = fetch_batch(DatasetStore())
+    assert result["status"] == "unavailable"

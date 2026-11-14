@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.tools import (
+from src.data.tools import (
     INVEST_TOOLS,
     USE_REAL_DATA_ENV,
     _should_use_real_data,
@@ -152,7 +152,7 @@ class TestGetSectorPerformance:
         assert len(result) > 0
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
+        monkeypatch.setattr("src.data.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback 文本而非崩溃"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 
@@ -189,7 +189,7 @@ class TestGetIndexPerformance:
         assert len(result) > 0
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
+        monkeypatch.setattr("src.data.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 
@@ -224,7 +224,7 @@ class TestGetMacroIndicators:
         assert len(result) > 0
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
+        monkeypatch.setattr("src.data.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 
@@ -260,7 +260,7 @@ class TestSearchStockNews:
         assert result.count("\n") >= 1
 
     def test_akshare_exception_returns_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("src.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
+        monkeypatch.setattr("src.data.tools._call_sina", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("mock unavailable")))
         """AKShare 抛出异常时应返回 fallback"""
         monkeypatch.setenv("USE_REAL_DATA", "true")
 

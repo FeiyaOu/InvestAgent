@@ -7,7 +7,7 @@ import re
 from urllib.parse import urlsplit
 
 import streamlit as st
-from src.stages.reporter import validate_report
+from src.specialists.report.stages.reporter import validate_report
 
 _DIMENSIONS = {'fundamental':'基本面', 'market':'市场', 'news':'新闻', 'analyst':'分析师'}
 _RATINGS = {'buy':'买入', 'hold':'持有', 'sell':'卖出'}

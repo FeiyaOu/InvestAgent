@@ -1,6 +1,7 @@
 """Streamlit parent-graph UI migration; no external API calls."""
 from pathlib import Path
 from unittest.mock import Mock, patch
+
 from streamlit.testing.v1 import AppTest
 
 _APP = str(Path(__file__).parent.parent / "app" / "streamlit_app.py")
@@ -23,7 +24,8 @@ def fake(records=None, status="completed", final="查询到100元"):
                                              "category": next(iter(records.values()))["category"]}),
         (("supervisor:test",), "updates", {"supervisor": {"task_results": records}}),
         ((), "updates", {"supervisor": {"task_results": records, "supervisor_status": status}}),
-        ((), "updates", {"composer": {"final_response": final, "composition_status": "completed"}}),
+        ((), "updates", {"composer": {"final_response": final, "composition_status": "completed",
+                                      "composition_summary": final}}),
     ])
     return graph
 
@@ -39,6 +41,45 @@ def submit(graph, history=None):
         at.run()
     assert not at.exception
     return at
+
+
+def page_text(at):
+    """Visible text from markdown and st.html blocks (the shell renders its cards with st.html)."""
+    return " ".join([str(m.value) for m in at.markdown] + [e.proto.body for e in at.get("html")])
+
+
+def open_view(at, name):
+    next(b for b in at.button if b.label.endswith(name)).click()
+    at.run()
+    assert not at.exception
+
+
+def test_home_shows_hero_examples_capabilities_and_navigation():
+    at = AppTest.from_file(_APP).run()
+    assert not at.exception
+    assert not at.tabs  # No result views before the first question.
+    page = page_text(at)
+    assert "想研究什么" in page and "行业研究报告" in page and "不构成任何投资建议" in page
+    labels = {b.label for b in at.button}
+    assert {"当前对话", "报告中心", "研究记录"} <= {label.split(" ")[-1] for label in labels}
+    assert any("不知道从哪里开始" in e.label for e in at.expander)
+
+
+def test_status_pill_reflects_data_mode_honestly():
+    at = AppTest.from_file(_APP).run()
+    page = page_text(at)
+    assert "上下文保留最近 3 轮" in page
+    assert ("真实数据" in page) or ("模拟数据" in page)
+    assert "数据服务正常" not in page  # Import success is not upstream health.
+
+
+def test_result_view_shows_question_card_and_history_lists_turns():
+    at = submit(fake())
+    page = page_text(at)
+    assert "你的问题" in page and "茅台价格" in page
+    open_view(at, "研究记录")
+    page = page_text(at)
+    assert "茅台价格" in page and "仅当前会话" in page
 
 
 def test_parent_answer_and_explicit_summary_without_checkpoint():
@@ -70,7 +111,8 @@ def test_report_nodes_remain_visible_when_final_report_is_unreadable():
 
 
 def test_rerender_does_not_execute_again_and_new_chat_clears_summary():
-    graph = fake(); at = submit(graph)
+    graph = fake()
+    at = submit(graph)
     at.run()
     assert graph.stream.call_count == 1
     next(b for b in at.button if "新对话" in b.label).click()
@@ -95,7 +137,8 @@ def test_multiple_reports_stream_under_their_task_ids():
 
 
 def test_clarification_display_skips_task_execution():
-    graph = Mock(); graph.stream.return_value = iter([
+    graph = Mock()
+    graph.stream.return_value = iter([
         ((), "updates", {"planner": {"planning_status": "needs_clarification", "plan": {
             "status": "needs_clarification", "tasks": [], "clarification_questions": ["哪家公司？"]}}}),
         ((), "updates", {"composer": {"final_response": "哪家公司？", "composition_status": "needs_clarification"}})])
@@ -105,15 +148,18 @@ def test_clarification_display_skips_task_execution():
 
 
 def test_real_parent_stream_drives_ui_with_mocked_specialists():
-    from src.parent_graph import create_parent_graph
-    md = Mock(); md.invoke.return_value = {"status": "completed", "error": None, "result": {
+    from src.orchestration.parent_graph import create_parent_graph
+    md = Mock()
+    md.invoke.return_value = {"status": "completed", "error": None, "result": {
         "answer": "实际父图100元", "evidence": [], "evidence_ids": [], "missing_information": []}}
-    planning = Mock(); planning.invoke.return_value = {"status": "ready", "tasks": [
+    planning = Mock()
+    planning.invoke.return_value = {"status": "ready", "tasks": [
         {"task_id": "m", "category": "market_data", "question": "查茅台", "depends_on": []}],
         "clarification_questions": []}
-    composing = Mock(); composing.invoke.return_value = {"answer": "实际父图100元"}
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.composer._create_chain", return_value=composing):
+    composing = Mock()
+    composing.invoke.return_value = {"answer": "实际父图100元"}
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.orchestration.composer._create_chain", return_value=composing):
         at = submit(create_parent_graph(market_data_graph=md, report_graph=Mock()))
     assert at.session_state["last_result"]["task_results"]["m"]["status"] == "completed"
     assert "实际父图100元" in at.session_state["last_result"]["final_response"]
@@ -197,12 +243,14 @@ def test_planner_diagnostic_events_display_and_survive_rerun():
 
 
 def test_strategy_results_display_deterministic_checks_and_scenarios():
-    from tests.test_strategy_tools import context
+    from src.specialists.strategy.agent import create_strategy_agent
     from tests.test_strategy_agent import answer
-    from src.strategy_agent import create_strategy_agent
+    from tests.test_strategy_tools import context
     _,cfg=context()
-    llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
-    with patch('src.stages.strategy.create_llm',return_value=llm):
+    llm=Mock()
+    llm.bind_tools.return_value=llm
+    llm.invoke.side_effect=answer
+    with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
     record=task('s','investment_strategy',result=result['result'])
     at=submit(fake({'s':record}, final='策略结果'))
@@ -228,13 +276,16 @@ def test_completed_report_can_be_read_and_downloaded_without_reexecution(valid_r
     graph=fake({'r':task('r','report',result={'final_report':json.dumps(valid_report,ensure_ascii=False),
         'perception_data':{'market_overview':'市场证据'}})},final='报告已生成')
     at=submit(graph)
+    open_view(at, '报告中心')
     assert any(valid_report['research_topic'] in m.value for m in at.markdown)
     buttons=at.get('download_button')
     assert len(buttons)==2
     assert {'下载 Markdown','下载 HTML'}=={b.proto.label for b in buttons}
     at.run()
     assert not at.exception and graph.stream.call_count==1
-    next(b for b in at.button if '新对话' in b.label).click();at.run()
+    next(b for b in at.button if '新对话' in b.label).click()
+    at.run()
+    open_view(at, '报告中心')
     assert not at.get('download_button')
 
 
@@ -242,6 +293,7 @@ def test_failed_report_cannot_be_downloaded_as_completed(valid_report):
     record=task('r','report','failed',result={'final_report':valid_report})
     record['error']={'type':'report_failed','message':'报告流程失败'}
     at=submit(fake({'r':record},status='failed',final='报告失败'))
+    open_view(at, '报告中心')
     assert not at.get('download_button')
 
 
@@ -249,15 +301,15 @@ def test_partial_report_is_draft_and_multiple_reports_have_distinct_downloads(va
     record=task('r1','report','partial',result={'final_report':valid_report})
     another=task('r2','report',result={'final_report':valid_report})
     at=submit(fake({'r1':record,'r2':another},status='partial'))
+    open_view(at, '报告中心')
     assert len(at.get('download_button'))==4
     assert any('草稿' in item.value for item in at.warning)
 
 
 def test_product_views_and_collapsed_developer_area_are_separated():
-    at=AppTest.from_file(_APP).run()
-    assert not at.exception
+    at=submit(fake())
     labels=[t.label for t in at.tabs]
-    assert {'回答','数据与分析','报告中心','报告生成过程','任务规划与调度','专家执行记录'} <= set(labels)
+    assert set(labels) == {'报告生成过程','任务规划与调度','专家执行记录'}  # Product results are one page, not tabs.
     debug=next(e for e in at.expander if e.label=='开发者调试')
     assert debug.proto.expanded is False
 
@@ -265,9 +317,68 @@ def test_product_views_and_collapsed_developer_area_are_separated():
 def test_example_click_only_fills_input_and_report_center_offers_report_example():
     with patch('src.agent.create_invest_agent') as factory:
         at=AppTest.from_file(_APP).run()
-        next(b for b in at.button if b.label=='比较两家公司').click();at.run()
+        next(b for b in at.button if b.label=='比较两家公司').click()
+        at.run()
         assert '收益、波动率和最大回撤' in at.text_area(key='query_input').value
         factory.assert_not_called()
-        next(b for b in at.button if b.label=='试试生成报告').click();at.run()
+        open_view(at, '报告中心')
+        next(b for b in at.button if b.label=='试试生成报告').click()
+        at.run()
+        assert at.session_state['view'] == '当前对话'  # Filling an example returns to the input.
         assert '请生成新能源行业' in at.text_area(key='query_input').value
         factory.assert_not_called()
+
+
+def test_progress_panel_follows_real_events_and_run_time_is_recorded():
+    import app.progress as progress
+    calls = []
+    real = progress.progress_html
+    def spy(steps, elapsed):
+        calls.append([(s["label"], s["state"]) for s in steps])
+        return real(steps, elapsed)
+    with patch("app.progress.progress_html", side_effect=spy):
+        at = submit(fake())
+    assert calls[0] == [("理解问题并规划任务", "active"), ("汇总回答", "pending")]
+    assert ("数据采集", "done") in calls[-1] and calls[-1][-1] == ("汇总回答", "done")
+    assert isinstance(at.session_state["conversation_history"][-1]["seconds"], int)
+    assert "正在进行深度研究" not in page_text(at)  # Panel is cleared once results are shown.
+
+
+def evidence_task():
+    return task(result={"answer": "茅台最新收盘100元", "missing_information": ["缺少分红数据"], "evidence": [
+        {"tool_call_id": "c1", "tool_name": "get_price_history", "content": "{}", "status": "returned",
+         "retrieved_at": "2026-11-14T10:00:00+00:00", "data_mode": "real", "as_of_date": "2026-11-13",
+         "source_url": "https://finance.sina.com.cn/"}]})
+
+
+def test_result_page_has_answer_head_summary_sections_and_sources():
+    at = submit(fake({"m": evidence_task()}, final="茅台最新收盘100元。"))
+    page = page_text(at)
+    assert "InvestAgent 研究助手" in page and "用时" in page and "1 条数据证据" in page
+    assert "核心结论" in page and "茅台最新收盘100元。" in page
+    assert "数据与证据" in page and "01" in page
+    assert any("缺少分红数据" in w.value for w in at.warning)
+    sources = next(e for e in at.expander if "参考来源" in e.label)
+    assert sources.dataframe[0].value["工具"].tolist() == ["get_price_history"]
+
+
+def test_fallback_answer_is_never_shown_as_a_model_summary():
+    graph = fake()
+    events = list(graph.stream.return_value)
+    events[-1] = ((), "updates", {"composer": {"final_response": "逐任务明细", "composition_status": "fallback",
+                                               "composition_summary": None}})
+    graph.stream.return_value = iter(events)
+    at = submit(graph)
+    assert "核心结论" not in page_text(at)
+    assert any("汇总生成失败" in w.value for w in at.warning)
+    assert any("逐任务" in e.label for e in at.expander)
+
+
+def test_report_section_links_to_report_center(valid_report):
+    import json
+    at = submit(fake({"r": task("r", "report", result={"final_report": json.dumps(valid_report, ensure_ascii=False)})},
+                     final="报告已生成"))
+    assert "研究报告" in page_text(at)
+    next(b for b in at.button if "前往报告中心" in b.label).click()
+    at.run()
+    assert at.session_state["view"] == "报告中心" and at.get("download_button")

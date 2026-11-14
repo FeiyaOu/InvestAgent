@@ -5,9 +5,9 @@ from unittest.mock import Mock, patch
 
 from langchain_core.messages import AIMessage
 
-from src.analytics_agent import create_analytics_agent
-from src.analytics_artifacts import AnalysisStore
-from src.datasets import DatasetStore, PriceDataset
+from src.core.datasets import DatasetStore, PriceDataset
+from src.specialists.analytics.agent import create_analytics_agent
+from src.specialists.analytics.artifacts import AnalysisStore
 
 
 def setup_data(mode="real"):
@@ -36,21 +36,24 @@ def result_answer(messages):
 
 
 def run(responses, inputs=None, config=None, **options):
-    llm = Mock(); llm.bind_tools.return_value = llm; llm.invoke.side_effect = responses
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = responses
     graph = create_analytics_agent(**options)
-    with patch("src.stages.analytics.create_llm", return_value=llm):
+    with patch("src.specialists.analytics.nodes.create_llm", return_value=llm):
         result = graph.invoke(inputs or {"task": "分析茅台表现"}, config=config)
     return result, llm
 
 
 def test_tools_compute_and_final_output_uses_actual_artifacts():
     ds, store, ref, config = setup_data()
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     counter = iter(["call", "answer"])
     def respond(messages):
         return call(ref.dataset_id) if next(counter) == "call" else result_answer(messages)
     llm.invoke.side_effect = respond
-    with patch("src.stages.analytics.create_llm", return_value=llm):
+    with patch("src.specialists.analytics.nodes.create_llm", return_value=llm):
         result = create_analytics_agent().invoke({"task": "分析茅台", "dataset_refs": [ref.model_dump(mode="json")]}, config=config)
     assert result["status"] == "completed"
     finding = result["result"]["findings"][0]
@@ -132,7 +135,7 @@ def test_model_failure_is_safe_and_empty_task_is_invalid():
 
 
 def test_existing_artifact_can_be_reused_but_not_with_conflicting_assumptions():
-    from src.analytics_tools import analyze_price_performance
+    from src.specialists.analytics.tools import analyze_price_performance
     ds, store, ref, config = setup_data()
     created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
     inputs = {"task": "解释已有表现", "dataset_refs": [ref.model_dump(mode="json")], "existing_analysis_refs": [created]}
@@ -200,7 +203,7 @@ def test_old_messages_and_outputs_are_reset_between_invocations():
 
 
 def test_foreign_analysis_artifact_is_rejected():
-    from src.analytics_tools import analyze_price_performance
+    from src.specialists.analytics.tools import analyze_price_performance
     ds, store, ref, config = setup_data()
     other = ds.put(ds.get(ref.dataset_id))
     foreign = json.loads(analyze_price_performance.invoke({"dataset_id": other.dataset_id}, config=config))["analysis_ref"]
@@ -211,7 +214,7 @@ def test_foreign_analysis_artifact_is_rejected():
 
 
 def test_runtime_methodology_is_loaded_into_system_context_from_fixed_path(tmp_path, monkeypatch):
-    from src.stages import analytics
+    from src.specialists.analytics import nodes as analytics
     skill = tmp_path / "SKILL.md"
     skill.write_text('---\nname: analytics-methodology\ndescription: test\n---\n只选择完成当前问题所需的工具。', encoding="utf-8")
     monkeypatch.setattr(analytics, "METHODOLOGY_PATH", skill)
@@ -226,7 +229,7 @@ def test_runtime_methodology_is_loaded_into_system_context_from_fixed_path(tmp_p
 
 
 def test_missing_methodology_returns_explicit_failure_without_model(tmp_path, monkeypatch):
-    from src.stages import analytics
+    from src.specialists.analytics import nodes as analytics
     monkeypatch.setattr(analytics, "METHODOLOGY_PATH", tmp_path / "missing.md")
     _, _, ref, config = setup_data()
     result, llm = run([], {"task": "分析", "dataset_refs": [ref.model_dump(mode="json")]}, config)
@@ -235,7 +238,7 @@ def test_missing_methodology_returns_explicit_failure_without_model(tmp_path, mo
 
 
 def test_repository_methodology_is_nonempty_and_reloaded_after_edits(tmp_path, monkeypatch):
-    from src.stages import analytics
+    from src.specialists.analytics import nodes as analytics
     body = analytics.load_analytics_methodology()
     assert "analyze_price_performance" in body
     assert "compare_valuations" in body
@@ -252,7 +255,7 @@ def test_repository_methodology_is_nonempty_and_reloaded_after_edits(tmp_path, m
 
 
 def test_valuation_references_cannot_be_dismissed_without_computation():
-    from src.datasets import ValuationDataset
+    from src.core.datasets import ValuationDataset
     ds, store, _, config = setup_data()
     refs = [ds.put(ValuationDataset(kind='valuation_snapshot', symbol=symbol, market=market,
         currency='CNY', provider='test', retrieved_at=datetime.now(timezone.utc), data_mode='real',
@@ -260,12 +263,13 @@ def test_valuation_references_cannot_be_dismissed_without_computation():
             'pe_ttm': {'value': pe, 'unit': 'multiple', 'basis': 'PE_TTM'},
             'pb': {'value': pb, 'unit': 'multiple', 'basis': 'PB_MRQ'}})).model_dump(mode='json')
         for symbol, market, pe, pb in [('600519', 'SSE', 21., 6.), ('000858', 'SZSE', 23., 2.)]]
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     replies = iter([False, True])
     def respond(messages):
         return result_answer(messages) if next(replies) else answer(missing_information=['未看到估值字段'])
     llm.invoke.side_effect = respond
-    with patch('src.stages.analytics.create_llm', return_value=llm):
+    with patch('src.specialists.analytics.nodes.create_llm', return_value=llm):
         result = create_analytics_agent().invoke({'task': '比较茅台和五粮液估值', 'dataset_refs': refs}, config=config)
     assert result['status'] == 'completed'
     assert result['tool_calls_used'] == 1
@@ -279,3 +283,13 @@ def test_missing_benchmark_returns_requirement_without_model_guessing_id():
     assert result['status'] == 'partial'
     assert result['result']['missing_data_requests'][0]['kind'] == 'price_history'
     llm.invoke.assert_not_called()
+
+
+def test_rank_peers_dataset_lists_are_scope_checked():
+    ds, store, ref, config = setup_data()
+    other = ds.put(ds.get(ref.dataset_id))
+    for key in ("price_dataset_ids", "valuation_dataset_ids"):
+        rogue = AIMessage(content="", tool_calls=[{"name": "rank_peers",
+            "args": {key: [other.dataset_id], "factors": ["momentum"]}, "id": "r1"}])
+        result, _ = run([rogue], {"task": "同行排名", "dataset_refs": [ref.model_dump(mode="json")]}, config)
+        assert result["error"]["type"] == "dataset_scope_error"

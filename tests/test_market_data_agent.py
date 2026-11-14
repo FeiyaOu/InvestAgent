@@ -1,12 +1,12 @@
 """Independent subgraph tests: no real LLM or market API."""
 import json
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
-from src.market_data_agent import create_market_data_agent
+from src.specialists.market_data.agent import create_market_data_agent
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def run(responses, tools=None, **kwargs):
     llm = Mock()
     llm.bind_tools.return_value = llm
     llm.invoke.side_effect = responses
-    with patch("src.stages.market_data.create_llm", return_value=llm):
+    with patch("src.specialists.market_data.nodes.create_llm", return_value=llm):
         graph = create_market_data_agent(tools=[lookup] if tools is None else tools, **kwargs)
         result = graph.invoke({"task": "查询茅台价格"})
     return graph, result, llm
@@ -111,7 +111,7 @@ def test_invocations_do_not_share_messages():
     llm = Mock()
     llm.bind_tools.return_value = llm
     llm.invoke.return_value = answer(evidence_ids=[], missing_information=["无数据"])
-    with patch("src.stages.market_data.create_llm", return_value=llm):
+    with patch("src.specialists.market_data.nodes.create_llm", return_value=llm):
         result = graph.invoke({"task": "另一个任务"})
     assert len(result["messages"]) == 3
 
@@ -122,7 +122,7 @@ def test_existing_evidence_is_validated_and_reusable():
     llm.invoke.return_value = answer(evidence_ids=["previous"])
     evidence = {"tool_call_id": "previous", "tool_name": "lookup", "content": "100 CNY",
                 "retrieved_at": "2026-11-10T00:00:00Z", "status": "returned", "data_mode": "real"}
-    with patch("src.stages.market_data.create_llm", return_value=llm):
+    with patch("src.specialists.market_data.nodes.create_llm", return_value=llm):
         graph = create_market_data_agent(tools=[lookup])
         result = graph.invoke({"task": "整理已有行情", "existing_evidence": [evidence]})
     assert result["status"] == "completed"
@@ -183,15 +183,17 @@ def test_output_repair_does_not_bind_tools_or_execute_new_calls():
 
 def test_history_tool_reference_is_collected_from_store_not_model(monkeypatch):
     import json
-    from src.datasets import DatasetStore
+
+    from src.core.datasets import DatasetStore
     monkeypatch.setenv("USE_REAL_DATA", "false")
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
         "name": "get_price_history", "args": {"query": "600519", "start_date": "2025-01-02",
             "end_date": "2025-01-03"}, "id": "history1"}]),
         AIMessage(content=json.dumps({"answer": "已获取模拟历史数据", "evidence_ids": ["history1"], "missing_information": []}))]
     store = DatasetStore()
-    with patch("src.stages.market_data.create_llm", return_value=llm):
+    with patch("src.specialists.market_data.nodes.create_llm", return_value=llm):
         graph = create_market_data_agent()
         result = graph.invoke({"task": "获取去年历史价格"}, config={"configurable": {"dataset_store": store}})
     assert result["status"] == "partial"
@@ -201,14 +203,15 @@ def test_history_tool_reference_is_collected_from_store_not_model(monkeypatch):
 
 
 def test_valuation_snapshot_reference_is_collected_by_market_agent(monkeypatch):
-    from src.datasets import DatasetStore
+    from src.core.datasets import DatasetStore
     monkeypatch.setenv("USE_REAL_DATA", "false")
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
         "name": "get_valuation_snapshot", "args": {"query": "茅台", "as_of_date": "2025-01-03"}, "id": "v1"}]),
         answer(evidence_ids=["v1"], missing_information=["股息率缺失"]) ]
     store = DatasetStore()
-    with patch("src.stages.market_data.create_llm", return_value=llm):
+    with patch("src.specialists.market_data.nodes.create_llm", return_value=llm):
         result = create_market_data_agent().invoke({"task": "获取茅台估值"},
             config={"configurable": {"dataset_store": store}})
     assert result["status"] == "partial"
@@ -216,3 +219,22 @@ def test_valuation_snapshot_reference_is_collected_by_market_agent(monkeypatch):
     assert ref["kind"] == "valuation_snapshot"
     assert store.get(ref["dataset_id"]).metrics["pe_ttm"].basis == "PE_TTM"
     assert result["result"]["evidence"][0]["as_of_date"] == "2025-01-03"
+
+
+def test_batch_history_references_are_all_collected(monkeypatch):
+    from src.core.datasets import DatasetStore
+    monkeypatch.setenv("USE_REAL_DATA", "false")
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
+        "name": "get_price_history_batch", "args": {"queries": ["600519", "000858"], "start_date": "2025-01-02",
+            "end_date": "2025-01-03"}, "id": "batch1"}]),
+        answer(evidence_ids=["batch1"])]
+    store = DatasetStore()
+    with patch("src.specialists.market_data.nodes.create_llm", return_value=llm):
+        result = create_market_data_agent().invoke({"task": "获取两只股票历史价格"},
+            config={"configurable": {"dataset_store": store}})
+    refs = result["result"]["dataset_refs"]
+    assert sorted(store.get(ref["dataset_id"]).symbol for ref in refs) == ["000858", "600519"]
+    assert result["result"]["evidence"][0]["status"] == "returned"
+    assert result["status"] == "partial"  # Mock data is never reported as complete.

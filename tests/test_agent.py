@@ -1,10 +1,11 @@
 """Public entrypoint migration: C8 task categories and C9 nonempty response."""
 from unittest.mock import Mock, patch
+
 import pytest
 from pydantic import ValidationError
 
 from src.agent import create_invest_agent, run_invest_agent
-from src.planner_schemas import PlanTask
+from src.orchestration.planner_schemas import PlanTask
 
 
 @pytest.mark.parametrize("category", ["market_data", "analytics", "investment_strategy", "report"])
@@ -26,7 +27,8 @@ def test_entrypoint_is_parent_without_checkpoint_or_reactive_nodes():
 
 
 def test_run_forwards_explicit_context_and_returns_parent_state():
-    graph = Mock(); graph.invoke.return_value = {"final_response": "answer", "task_results": {}}
+    graph = Mock()
+    graph.invoke.return_value = {"final_response": "answer", "task_results": {}}
     with patch("src.agent.create_invest_agent", return_value=graph):
         result = run_invest_agent("查询", conversation_context="茅台", config={"tags": ["test"]})
     inputs = graph.invoke.call_args.args[0]

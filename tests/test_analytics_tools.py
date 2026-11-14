@@ -4,9 +4,9 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from src.datasets import DatasetStore, PriceDataset
-from src.analytics_artifacts import AnalysisStore
-from src.analytics_tools import analyze_price_performance, compare_with_benchmark
+from src.core.datasets import DatasetStore, PriceDataset
+from src.specialists.analytics.artifacts import AnalysisStore
+from src.specialists.analytics.tools import analyze_price_performance, compare_with_benchmark
 
 
 def dataset(store, closes, symbol="600519", asset_type="stock", dates=None, adjustment="qfq"):

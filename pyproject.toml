@@ -1,7 +1,7 @@
 [project]
 name = "investagent"
 version = "0.1.0"
-description = "混合型智能投研助手 — LangGraph Hybrid Agent showcase (Reactive + Deliberative)"
+description = "任务型智能投研助手 — LangGraph Planner/Supervisor/Composer 多专家子图"
 requires-python = ">=3.11"
 dependencies = []
 

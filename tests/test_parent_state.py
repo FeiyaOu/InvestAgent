@@ -2,8 +2,8 @@
 import pytest
 from pydantic import ValidationError
 
-from src.parent_state import create_parent_state, validate_task_results
-from src.task_contracts import TaskResult
+from src.orchestration.parent_state import create_parent_state, validate_task_results
+from src.orchestration.task_contracts import TaskResult
 
 
 def record(**overrides):
@@ -65,24 +65,27 @@ def test_result_map_validates_keys_without_mutating_input():
 
 def test_existing_planner_supervisor_composer_accept_parent_fields():
     from unittest.mock import Mock, patch
-    from src.stages.planner import planner
-    from src.supervisor import create_supervisor_graph
-    from src.stages.composer import composer
+
+    from src.orchestration.composer import composer
+    from src.orchestration.planner import planner
+    from src.orchestration.supervisor import create_supervisor_graph
 
     state = create_parent_state("茅台最新价格")
     planned = {"status": "ready", "tasks": [{k: v for k, v in record().items()
                 if k in {"task_id", "category", "question", "depends_on"}}], "clarification_questions": []}
-    chain = Mock(); chain.invoke.return_value = planned
-    with patch("src.stages.planner._create_chain", return_value=chain):
+    chain = Mock()
+    chain.invoke.return_value = planned
+    with patch("src.orchestration.planner._create_chain", return_value=chain):
         state.update(planner(state))
-    md = Mock(); md.invoke.return_value = {"status": "completed", "error": None, "result": {
+    md = Mock()
+    md.invoke.return_value = {"status": "completed", "error": None, "result": {
         "answer": "100元", "evidence_ids": [], "evidence": [], "missing_information": []}}
     executed = create_supervisor_graph(market_data_graph=md, report_graph=Mock()).invoke({
         "plan": state["plan"], "report_parameters": state["report_parameters"]})
     # Only the documented boundary fields cross from execution into parent state.
     state.update({key: executed[key] for key in ("task_results", "supervisor_status", "supervisor_error")})
     chain.invoke.return_value = {"answer": "茅台价格100元。"}
-    with patch("src.stages.composer._create_chain", return_value=chain):
+    with patch("src.orchestration.composer._create_chain", return_value=chain):
         state.update(composer(state))
     assert state["composition_status"] == "completed"
     assert "100元" in state["final_response"]
