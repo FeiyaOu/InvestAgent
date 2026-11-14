@@ -50,6 +50,13 @@
 Supervisor 发出 task_started 自定义事件标识 task_id/category，供顺序执行时关联内部节点事件。
 子图消息不写入父状态，UI 不使用 get_state() 或 MemorySaver。
 
+页面结构（2026-11-14 按 frontend/ 设计思路改版，仍为 Streamlit）：侧边栏切换「当前对话 / 报告中心 / 研究记录」；
+首页为问候、输入、示例与能力卡片；运行中显示由真实规划与任务事件驱动的进度面板；结果为单页：
+回答头部（状态 · 用时 · 证据数）、核心结论、按任务类别动态编号的分节、参考来源与逐任务明细折叠区。
+ParentState 新增 `composition_summary`：仅保存 Composer 模型生成的总结（未调用模型或回退时为 None），
+`final_response` 仍为总结加逐任务明细，保持兼容。“核心结论”只展示 composition_summary，不把明细冒充总结。
+报告中心与研究记录只包含当前会话内容；状态标签只表示数据模式，不声称上游服务健康。
+
 ## 工具与数据边界
 
 Market Data 使用 src/data/tools.py 的七个工具：INVEST_TOOLS 五个文本工具（行业、指数、宏观、新闻、个股），

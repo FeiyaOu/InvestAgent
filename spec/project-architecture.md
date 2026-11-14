@@ -174,3 +174,11 @@ TaskError 移至 core/errors.py，使 specialists 不反向依赖 orchestration�
 用户确认三阶段升级：阶段 1 技术因子/PS/批量采集/收益矩阵/同行 z-score/组合 VaR·CVaR/历史情景重演；
 阶段 2 最小方差与风险平价优化及调仓清单；阶段 3 经 AKShare 接口实测后接入财务、机构持仓与研报评级表。
 专家分工不变，契约与验收见[分析与策略能力升级规格](analysis-strategy-upgrade.md)。
+
+
+## Streamlit 界面改版（2026-11-14）
+
+参照 frontend/ 中的 Figma 导出原型改版现有 Streamlit，不引入独立前端或 HTTP 后端。
+主题在 `.streamlit/config.toml`；静态外观在 `app/ui_shell.py`（自有 `zh-*` 样式类，内部选择器仅用 `st-key-*`）；
+进度面板由 `app/progress.py` 纯函数从真实规划与任务事件推导。原型中的置信度、领先方、已交叉验证、
+超出现有能力的示例与“数据服务正常”均未采用。持久化（历史、报告库、收藏）与 PDF 不在本次范围。

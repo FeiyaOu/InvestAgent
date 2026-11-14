@@ -1,0 +1,19 @@
+# Visual theme following the frontend/ design (dark green sidebar, light sage canvas).
+[theme]
+base = "light"
+primaryColor = "#163d30"
+backgroundColor = "#f5f7f4"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#18251f"
+borderColor = "#dde4de"
+showWidgetBorder = true
+font = "Noto Sans SC:https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap, sans-serif"
+baseRadius = "0.75rem"
+showSidebarBorder = false
+
+[theme.sidebar]
+backgroundColor = "#10261f"
+secondaryBackgroundColor = "#1d3a30"
+textColor = "#d9e4de"
+primaryColor = "#b9efb7"
+borderColor = "#24463a"
