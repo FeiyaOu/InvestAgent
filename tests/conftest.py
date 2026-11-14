@@ -24,6 +24,12 @@ def _isolate_api_keys(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRe
     monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _reset_security_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The code→name directory is a process cache; never leak one test's mock into another."""
+    monkeypatch.setattr("src.data.tools._DIRECTORY_CACHE", None, raising=False)
+
+
 # ---- 合规报告工厂 ----
 
 def _build_valid_dimension(dim_name: str) -> dict:

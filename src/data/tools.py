@@ -12,7 +12,10 @@ AKShare 市场数据工具
 
 from __future__ import annotations
 
+import json
 import os
+import re
+from pathlib import Path
 from typing import Literal
 
 from langchain_core.runnables import RunnableConfig
@@ -517,6 +520,95 @@ def _resolve_stock_code(query: str) -> str | None:
     return None
 
 
+_DIRECTORY_PATH = Path(__file__).with_name("a_share_directory.json")
+_DIRECTORY_CACHE: dict | None = None  # {"generated_at", "securities"}: static reference data, not datasets.
+
+
+def _load_directory() -> dict:
+    """Read the repo snapshot once per process; no network on the request path.
+
+    Regenerate with scripts/refresh_security_directory.py. A missing or corrupt file
+    yields an empty directory so callers fall back to the static table as unverified.
+    """
+    global _DIRECTORY_CACHE
+    if _DIRECTORY_CACHE is None:
+        try:
+            payload = json.loads(_DIRECTORY_PATH.read_text(encoding="utf-8"))
+            _DIRECTORY_CACHE = {"generated_at": payload.get("generated_at"), "securities": dict(payload["securities"])}
+        except (OSError, ValueError, KeyError, TypeError):
+            _DIRECTORY_CACHE = {"generated_at": None, "securities": {}}
+    return _DIRECTORY_CACHE
+
+
+def _security_directory() -> dict[str, str]:
+    """Exchange code -> short name from the snapshot."""
+    return _load_directory()["securities"]
+
+
+def _unverified_name_note() -> str:
+    generated = _load_directory()["generated_at"]
+    where = f"代码表快照（{generated}）未收录" if generated else "代码表快照不可用"
+    return f"未能核对证券简称：{where}，请确认代码对应的公司。"
+
+
+def _parse_code(text: str) -> str | None:
+    """Six-digit or exchange-qualified code only; never a name lookup."""
+    text = text.strip()
+    if text.isdigit() and len(text) == 6:
+        return text
+    return _resolve_stock_code(text) if re.fullmatch(r"(?:(?:SH|SZ)\.?[0-9]{6}|[0-9]{6}\.(?:SH|SZ))", text.upper()) else None
+
+
+def _names_match(given: str, official: str) -> bool:
+    given, official = re.sub(r"\s", "", given), re.sub(r"\s", "", official)
+    return given == official or given in official or official in given
+
+
+def _code_for_name(name: str, directory: dict[str, str]) -> str | None:
+    exact = [code for code, official in directory.items() if official == name]
+    if len(exact) == 1:
+        return exact[0]
+    return _resolve_stock_code(name)  # Static common names and aliases (e.g. 茅台).
+
+
+def resolve_security(query: str) -> tuple[str | None, str | None, str | None]:
+    """Resolve "名称", "代码" or "名称(代码)" to (code, official_name, error).
+
+    When both name and code are given they must agree with the exchange directory
+    (or the static table if the directory is unavailable); a contradiction is an
+    error naming the correct code, never a silent switch to either side.
+    """
+    query = (query or "").strip()
+    if not query:
+        return None, None, "查询对象为空"
+    named = re.fullmatch(r"(.+?)\s*[（(]\s*(.+?)\s*[)）]", query)
+    if named:
+        name, code = named.group(1).strip(), _parse_code(named.group(2))
+        if code is None:
+            return None, None, f"无法识别“{query}”中的股票代码"
+    else:
+        code = _parse_code(query)
+        name = None if code else query
+    directory = _security_directory()
+    if code and name:
+        official = directory.get(code)
+        if official and _names_match(name, official):
+            return code, official, None
+        expected = _code_for_name(name, directory)
+        if official:
+            hint = f"{name}对应 {expected}" if expected else f"未找到“{name}”对应的代码"
+            return None, None, f"名称与代码不一致：{code} 是{official}，{hint}；请核对后重试。"
+        if expected and expected != code:
+            return None, None, f"名称与代码不一致：{name}对应 {expected}，请求为 {code}；请核对后重试。"
+        return code, None, None
+    if code:
+        return code, directory.get(code), None
+    code = _code_for_name(name, directory)
+    if code is None:
+        return None, None, f"未能识别股票“{name}”，请提供六位代码"
+    return code, directory.get(code), None
+
+
 # ============================================================
 # 工具 5：个股历史表现（新增）
 # ============================================================
@@ -637,7 +729,13 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
         start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
         if start > end or (end - start).days > 3660 or end > datetime.now(ZoneInfo("Asia/Shanghai")).date():
             return unavailable("invalid_range", "日期须为有效历史区间，单次最长3660天。")
-        code = _resolve_stock_code(query) if asset_type == "stock" else query.strip()
+        security_name = None
+        if asset_type == "stock":
+            code, security_name, problem = resolve_security(query)
+            if problem and problem.startswith("名称与代码不一致"):
+                return unavailable("symbol_mismatch", problem)
+        else:
+            code = query.strip()
         if not code or len(code) != 6 or not code.isdigit():
             return unavailable("invalid_symbol", "仅支持六位 A 股或指数代码，请明确查询对象。")
         if asset_type == "index" and adjustment != "none":
@@ -661,7 +759,7 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
                     provider = "akshare/sina"
                     if df is not None:
                         df = df.rename(columns={"date": "日期", "close": "收盘", "open": "开盘",
-                            "high": "最高", "low": "最低", "volume": "成交量"})
+                            "high": "最高", "low": "最低", "volume": "成交量", "turnover": "换手率"})
             else:
                 try:
                     df = ak.index_zh_a_hist(symbol=code, period="daily", start_date=start.strftime("%Y%m%d"),
@@ -688,6 +786,7 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
             return unavailable("no_data", "指定区间无可用交易数据。")
         rows = []
         has_volume = asset_type == "stock" and "成交量" in df.columns
+        has_turnover = asset_type == "stock" and "换手率" in df.columns
         for _, raw in df.iterrows():
             observed = pd.to_datetime(raw["日期"], errors="raise").date()
             if not start <= observed <= end:
@@ -699,27 +798,67 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
             if has_volume:
                 # stock_zh_a_hist documented volume is lots (手), normalize to shares.
                 row["volume"] = None if pd.isna(raw["成交量"]) else float(raw["成交量"]) * (1 if provider == "akshare/sina" else 100)
+            if has_turnover:
+                # Eastmoney reports percent; Sina already reports volume / float shares.
+                row["turnover"] = None if pd.isna(raw["换手率"]) else float(raw["换手率"]) / (1 if provider == "akshare/sina" else 100)
             rows.append(row)
-        dataset = PriceDataset(kind="price_history", symbol=code,
+        dataset = PriceDataset(kind="price_history", symbol=code, security_name=security_name,
             market=("SSE" if code.startswith("6") else "SZSE") if asset_type == "stock" else "CN_INDEX",
             asset_type=asset_type, currency="CNY", frequency="daily", adjustment=adjustment,
             price_unit="CNY/share" if asset_type == "stock" else "points",
-            volume_unit="shares" if has_volume else "not_available", provider=provider,
+            volume_unit="shares" if has_volume else "not_available",
+            turnover_unit="fraction" if has_turnover else "not_available", provider=provider,
             source_url=("https://finance.sina.com.cn/" if provider == "akshare/sina" else "https://quote.eastmoney.com/") if real else None,
             retrieved_at=datetime.now(timezone.utc), data_mode="real" if real else "mock", rows=rows)
         ref = store.put(dataset)
+        limitations = ["模拟工作日序列，不反映交易所节假日或真实行情"] if not real else []
+        if asset_type == "stock" and security_name is None:
+            limitations.append(_unverified_name_note())
         return json.dumps({"status": "available", "dataset_ref": ref.model_dump(mode="json"),
             "first_close": rows[0]["close"], "last_close": rows[-1]["close"],
-            "limitations": ["模拟工作日序列，不反映交易所节假日或真实行情"] if not real else []}, ensure_ascii=False)
+            "limitations": limitations}, ensure_ascii=False)
     except Exception as exc:
         return unavailable("history_unavailable", f"历史行情获取或数据验证失败（{type(exc).__name__}）；未注册数据集，请稍后重试。")
+
+
+@tool
+def get_price_history_batch(queries: list[str], start_date: str, end_date: str, config: RunnableConfig,
+                            asset_type: Literal["stock", "index"] = "stock",
+                            adjustment: Literal["none", "qfq", "hfq"] = "qfq") -> str:
+    """Fetch daily history for 2-20 distinct symbols over one shared range and adjustment.
+
+    Use for peer comparison or portfolio risk instead of repeated get_price_history calls.
+    Each symbol follows get_price_history rules and registers its own dataset; one symbol
+    failing does not discard the others. Returns per-symbol references, never rows.
+    """
+    import json
+
+    cleaned = [query.strip() for query in queries if isinstance(query, str)]
+    if len(cleaned) != len(queries) or not 2 <= len(cleaned) <= 20 or len(set(cleaned)) != len(cleaned):
+        return json.dumps({"status": "unavailable", "error": {"type": "invalid_queries",
+            "message": "需要2到20个不重复的查询对象；单个标的请使用 get_price_history。"}}, ensure_ascii=False)
+    items = []
+    for query in cleaned:
+        # Reuse the single-symbol path so fallback, units and validation stay identical.
+        result = json.loads(get_price_history.func(query, start_date, end_date, config,
+                                                   asset_type=asset_type, adjustment=adjustment))
+        item = {"query": query, "status": result["status"]}
+        item.update({"dataset_ref": result["dataset_ref"]} if result["status"] == "available"
+                    else {"error": result["error"]})
+        items.append(item)
+    failed = [item["query"] for item in items if item["status"] != "available"]
+    status = "unavailable" if len(failed) == len(items) else "partial" if failed else "available"
+    limitations = [f"部分标的无法获取历史行情：{', '.join(failed)}"] if failed else []
+    if not _should_use_real_data():
+        limitations.append("模拟工作日序列，不反映交易所节假日或真实行情")
+    return json.dumps({"status": status, "items": items, "limitations": limitations}, ensure_ascii=False)
 
 
 @tool
 def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str | None = None) -> str:
     """Fetch an A-share valuation snapshot on the latest available date <= as_of_date.
 
-    Date is YYYY-MM-DD, defaults to today's Shanghai date. Uses PE TTM and PB MRQ,
+    Date is YYYY-MM-DD, defaults to today's Shanghai date. Uses PE TTM, PB MRQ and PS TTM,
     never substitutes static PE. Dividend yield is explicitly unavailable in this source.
     Registers a dated ValuationDataset and returns its canonical reference and metrics.
     Historical source observations are not guaranteed point-in-time financial records.
@@ -744,7 +883,9 @@ def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str |
         requested = date.fromisoformat(as_of_date) if as_of_date is not None else today
         if requested > today:
             return unavailable("invalid_date", "不支持未来日期估值。")
-        code = _resolve_stock_code(query)
+        code, security_name, problem = resolve_security(query)
+        if problem and problem.startswith("名称与代码不一致"):
+            return unavailable("symbol_mismatch", problem)
         if not code or len(code) != 6 or not code.startswith(("0", "3", "6")):
             return unavailable("invalid_symbol", "首版仅支持沪深 A 股名称或六位代码。")
         real = _should_use_real_data()
@@ -765,9 +906,10 @@ def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str |
             raw = latest.iloc[0]
         else:
             actual = requested
-            raw = {"PE(TTM)": 20., "市净率": 2.}
+            raw = {"PE(TTM)": 20., "市净率": 2., "市销率": 5.}
         values = {}
-        for name, column, basis in (("pe_ttm", "PE(TTM)", "PE_TTM"), ("pb", "市净率", "PB_MRQ")):
+        for name, column, basis in (("pe_ttm", "PE(TTM)", "PE_TTM"), ("pb", "市净率", "PB_MRQ"),
+                                    ("ps_ttm", "市销率", "PS_TTM")):
             source = raw.get(column)
             if source is None or pd.isna(source) or str(source).strip() in {"", "-", "--"}:
                 value, reason = None, f"供应商未提供{column}，不以其他口径代替"
@@ -780,7 +922,7 @@ def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str |
             "missing_reason": "该来源不提供有明确口径的个股股息率"}
         if all(values[name]["value"] is None for name in ("pe_ttm", "pb")):
             return unavailable("no_metrics", "无可用 PE TTM 或 PB MRQ，不注册空快照。")
-        dataset = ValuationDataset(kind="valuation_snapshot", symbol=code,
+        dataset = ValuationDataset(kind="valuation_snapshot", symbol=code, security_name=security_name,
             market="SSE" if code.startswith("6") else "SZSE", currency="CNY",
             provider="akshare/eastmoney/stock_value_em" if real else "synthetic_demo",
             source_url=f"https://data.eastmoney.com/gzfx/detail/{code}.html" if real else None,
@@ -793,6 +935,8 @@ def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str |
             limitations.append(f"请求日期{requested}，实际观察日期{actual}；未假定为当天估值。")
         if not real:
             limitations.append("模拟数据，不代表真实估值。")
+        if security_name is None:
+            limitations.append(_unverified_name_note())
         return json.dumps({"status": "available", "dataset_ref": ref.model_dump(mode="json"),
             "requested_date": requested.isoformat(), "metrics": dataset.model_dump(mode="json")["metrics"],
             "limitations": limitations}, ensure_ascii=False, allow_nan=False)

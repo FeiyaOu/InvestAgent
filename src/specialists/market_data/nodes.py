@@ -19,7 +19,7 @@ from src.specialists.market_data.state import (
 )
 
 _SYSTEM = """你是市场数据专家，只收集、核实并整理证据，不做投资建议或因子计算。
-按任务选择必要工具，避免重复查询。需要历史价格或后续量化数据时选择 get_price_history，明确日期及复权口径；指数使用 adjustment=none。估值查询使用 get_valuation_snapshot，区分PE TTM/PB MRQ与静态PE，不把低估值直接解释为投资建议。数据集引用由程序收集，不在最终 JSON 中自行生成 dataset_refs。不把模拟数据、错误提示或过期数据称为实时事实。
+按任务选择必要工具，避免重复查询。需要历史价格或后续量化数据时选择 get_price_history，明确日期及复权口径；指数使用 adjustment=none。2个及以上标的需同一区间日线时使用 get_price_history_batch 一次采集，不逐只重复调用。任务给出“名称(代码)”时原样传入以便程序核对；只有名称时直接传名称，不要自行补代码。返回 symbol_mismatch 时只按错误信息给出的正确代码重试一次。估值查询使用 get_valuation_snapshot，区分PE TTM/PB MRQ与静态PE，不把低估值直接解释为投资建议。数据集引用由程序收集，不在最终 JSON 中自行生成 dataset_refs。不把模拟数据、错误提示或过期数据称为实时事实。
 工具只能提供现有能力；无法获取时明确说明缺失信息，不编造来源、日期或数值。
 最终仅输出 JSON，格式为：
 {schema}
@@ -102,6 +102,16 @@ def make_tools_node(tools):
                                 raise ValueError("dataset store unavailable")
                             metadata = store.get_ref(payload["dataset_ref"]["dataset_id"]).model_dump(mode="json")
                             refs[metadata["dataset_id"]] = metadata
+                    elif message.name == "get_price_history_batch" and getattr(message, "status", "") != "error":
+                        payload = json.loads(content)
+                        # Partial batches still return usable datasets; the failed symbols stay in content.
+                        unavailable = payload.get("status") not in {"available", "partial"}
+                        for item in payload.get("items", []) if not unavailable else []:
+                            if item["status"] == "available":
+                                if not isinstance(store, DatasetStore):
+                                    raise ValueError("dataset store unavailable")
+                                ref = store.get_ref(item["dataset_ref"]["dataset_id"]).model_dump(mode="json")
+                                refs[ref["dataset_id"]] = ref
                     evidence.append({"tool_call_id": message.tool_call_id,
                         "tool_name": message.name or "unknown", "content": content,
                         "retrieved_at": datetime.now(timezone.utc).isoformat(),

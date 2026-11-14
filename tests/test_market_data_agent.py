@@ -219,3 +219,22 @@ def test_valuation_snapshot_reference_is_collected_by_market_agent(monkeypatch):
     assert ref["kind"] == "valuation_snapshot"
     assert store.get(ref["dataset_id"]).metrics["pe_ttm"].basis == "PE_TTM"
     assert result["result"]["evidence"][0]["as_of_date"] == "2025-01-03"
+
+
+def test_batch_history_references_are_all_collected(monkeypatch):
+    from src.core.datasets import DatasetStore
+    monkeypatch.setenv("USE_REAL_DATA", "false")
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
+        "name": "get_price_history_batch", "args": {"queries": ["600519", "000858"], "start_date": "2025-01-02",
+            "end_date": "2025-01-03"}, "id": "batch1"}]),
+        answer(evidence_ids=["batch1"])]
+    store = DatasetStore()
+    with patch("src.specialists.market_data.nodes.create_llm", return_value=llm):
+        result = create_market_data_agent().invoke({"task": "获取两只股票历史价格"},
+            config={"configurable": {"dataset_store": store}})
+    refs = result["result"]["dataset_refs"]
+    assert sorted(store.get(ref["dataset_id"]).symbol for ref in refs) == ["000858", "600519"]
+    assert result["result"]["evidence"][0]["status"] == "returned"
+    assert result["status"] == "partial"  # Mock data is never reported as complete.

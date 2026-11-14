@@ -18,6 +18,7 @@ class DatasetModel(BaseModel):
 
 class Provenance(DatasetModel):
     symbol: str = Field(min_length=1)
+    security_name: str | None = None  # Exchange short name when verified; None means unverified.
     market: str = Field(min_length=1)
     currency: str = Field(min_length=1)
     provider: str = Field(min_length=1)
@@ -39,6 +40,7 @@ class PriceRow(DatasetModel):
     high: float | None = Field(default=None, gt=0)
     low: float | None = Field(default=None, gt=0)
     volume: float | None = Field(default=None, ge=0)
+    turnover: float | None = Field(default=None, ge=0)  # Fraction of float shares, never percent.
 
     @model_validator(mode="after")
     def consistent_range(self):
@@ -57,6 +59,7 @@ class PriceDataset(Provenance):
     adjustment: Literal["none", "qfq", "hfq", "total_return"]
     price_unit: str = Field(min_length=1)
     volume_unit: Literal["shares", "not_available"]
+    turnover_unit: Literal["fraction", "not_available"] = "not_available"
     rows: list[PriceRow] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -66,6 +69,8 @@ class PriceDataset(Provenance):
             raise ValueError("价格日期必须唯一且严格递增")
         if self.volume_unit == "not_available" and any(row.volume is not None for row in self.rows):
             raise ValueError("成交量存在时必须提供已规范化的单位")
+        if self.turnover_unit == "not_available" and any(row.turnover is not None for row in self.rows):
+            raise ValueError("换手率存在时必须提供已规范化的单位")
         return self
 
 
@@ -82,7 +87,7 @@ class ValuationMetric(DatasetModel):
         return self
 
 
-MetricName = Literal["pe_ttm", "pb", "dividend_yield", "revenue_growth", "earnings_growth", "roe", "eps"]
+MetricName = Literal["pe_ttm", "pb", "ps_ttm", "dividend_yield", "revenue_growth", "earnings_growth", "roe", "eps"]
 
 
 class ValuationDataset(Provenance):
@@ -99,7 +104,7 @@ class ValuationDataset(Provenance):
         if self.report_period and self.report_period > self.as_of_date:
             raise ValueError("报告期晚于观察日期")
         for name, metric in self.metrics.items():
-            unit = "multiple" if name in {"pe_ttm", "pb"} else "currency_per_share" if name == "eps" else "percent"
+            unit = "multiple" if name in {"pe_ttm", "pb", "ps_ttm"} else "currency_per_share" if name == "eps" else "percent"
             if metric.unit != unit:
                 raise ValueError(f"{name} 的单位必须为 {unit}")
         return self
@@ -119,6 +124,7 @@ class DatasetRef(Provenance):
     frequency: Literal["daily"] | None = None
     price_unit: str | None = None
     volume_unit: Literal["shares", "not_available"] | None = None
+    turnover_unit: Literal["fraction", "not_available"] | None = None
 
 
 class DatasetStore:
@@ -140,7 +146,8 @@ class DatasetStore:
             ref = DatasetRef(**common, dataset_id=ident, kind=data.kind,
                 start_date=data.rows[0].date, end_date=data.rows[-1].date, row_count=len(data.rows),
                 adjustment=data.adjustment, frequency=data.frequency,
-                price_unit=data.price_unit, volume_unit=data.volume_unit)
+                price_unit=data.price_unit, volume_unit=data.volume_unit,
+                turnover_unit=data.turnover_unit)
         else:
             ref = DatasetRef(**common, dataset_id=ident, kind=data.kind,
                 start_date=data.as_of_date, end_date=data.as_of_date, row_count=1)
