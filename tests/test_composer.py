@@ -195,3 +195,58 @@ def test_failed_strategy_cannot_be_replaced_by_model_threshold_check():
     assert 'period_return' in result['final_response']
     assert 'invalid_output' in result['final_response']
     factory.assert_not_called()
+
+
+def offline_composer(*records):
+    chain = Mock()
+    chain.invoke.side_effect = RuntimeError("offline")
+    with patch("src.orchestration.composer._create_chain", return_value=chain):
+        return composer(state(*records))["final_response"]
+
+
+def test_peer_ranking_rows_show_relative_position_not_metric_value():
+    row = analytical_record()
+    row["result"]["findings"] = [{"analysis_id": "analysis1", "tool_name": "rank_peers",
+        "metrics": {"pe_ttm.cross_section_mean": 20.}, "metric_units": {"pe_ttm.cross_section_mean": "multiple"},
+        "table": [{"symbol": "600519", "dimension": "valuation", "factor": "pe_ttm", "raw_value": 30.,
+                   "z_score": 1.2, "percentile": .8, "valid_count": 5, "excluded_reason": None}]}]
+    text = offline_composer(row)
+    assert "600519 · pe_ttm" in text and "z=1.2" in text and "百分位=80.0%" in text
+    assert "未知标的" not in text
+
+
+def test_return_matrix_rows_show_pairs():
+    row = analytical_record()
+    row["result"]["findings"] = [{"analysis_id": "analysis1", "tool_name": "build_return_matrix",
+        "metrics": {}, "metric_units": {}, "table": [{"symbol_a": "600519", "symbol_b": "000858",
+            "daily_covariance": .0001, "annualized_covariance": .0252, "correlation": .65, "missing_reason": None}]}]
+    text = offline_composer(row)
+    assert "600519 × 000858" in text and "0.65" in text
+
+
+def test_strategy_risk_results_reach_the_model_and_the_fallback():
+    strategy = record("s", "investment_strategy", "completed", {"summary": "组合风险评估", "risk_results": [
+        {"return_matrix_analysis_id": "analysis1", "metrics": {"historical_var_95": .021}, "observations": 480}]})
+    chain = Mock()
+    chain.invoke.return_value = {"answer": "组合1日VaR95%约2.1%。"}
+    with patch("src.orchestration.composer._create_chain", return_value=chain):
+        composer(state(strategy))
+    assert "historical_var_95" in chain.invoke.call_args.args[0]["task_results"]
+    assert "historical_var_95" in offline_composer(strategy)
+
+
+def test_peer_rows_and_sources_show_security_names():
+    row = analytical_record()
+    row["result"]["dataset_refs"][0]["security_name"] = "贵州茅台"
+    row["result"]["findings"] = [{"analysis_id": "analysis1", "tool_name": "rank_peers", "metrics": {}, "metric_units": {},
+        "table": [{"symbol": "600809", "security_name": "山西汾酒", "dimension": "valuation", "factor": "pb",
+                   "raw_value": 7., "z_score": .5, "percentile": .6, "valid_count": 5, "excluded_reason": None}]}]
+    text = offline_composer(row)
+    assert "600809 山西汾酒 · pb" in text and "600519 贵州茅台" in text
+
+
+def test_prompt_forbids_signal_and_rank_language_and_pins_window_labels():
+    from src.orchestration.composer import _SYSTEM
+    for rule in ("超买", "超卖", "第1名", "相对较高", "rsi_window"):
+        assert rule in _SYSTEM
+    assert "{" not in _SYSTEM  # ChatPromptTemplate would treat braces as variables.

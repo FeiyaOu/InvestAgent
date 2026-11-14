@@ -21,6 +21,7 @@ from src.orchestration.planner_schemas import (
     planner_output_schema,
 )
 from src.orchestration.report_intent import ReportIntentError, validate_report_intent
+from src.orchestration.security_check import SecurityIdentityError, validate_plan_securities
 
 _SYSTEM = """你是投研助手的任务规划器。只输出计划，不回答问题、不调用工具、不执行专家。
 将用户请求拆解为必要而不重复的任务，分类如下：
@@ -39,7 +40,9 @@ analytics 已可计算结构化数据；investment_strategy已支持证据解释
 例如“查茅台和五粮液股价，比较估值并分析未来一年机会”可含数据、分析、策略任务，
 不得生成 report；“查茅台股价，同时生成新能源行业报告”应含两个独立任务。
 分析数据依赖规则：
-- 沪深股票代码使用六位数字（贵州茅台600519，五粮液000858）。
+- 股票在question与subjects中优先只写名称（如 贵州茅台、山西汾酒），由程序按交易所代码表解析代码；
+  只有用户原文给出代码时才写“名称(代码)”。程序会核对计划中所有“名称(代码)”与持仓代码，
+  不一致时按修正反馈中的正确代码修改，不要坚持记忆中的代码。
   股票前复权对应adjustment=qfq，后复权对应hfq，不复权对应none；不得同时写前复权与none。
   用户未指定股票复权方式时采用历史工具默认qfq，不自行增加相互矛盾的口径。
 - 每个 analytics 任务须直接依赖至少一个提供结构化数据的 market_data 或 analytics 任务；
@@ -56,12 +59,16 @@ analytics 已可计算结构化数据；investment_strategy已支持证据解释
   其他独立的最新价格查询或报告请求不应被无关analytics阻塞。
 - analytics_parameters 可填写subjects、time_range和用户明确指定的assumptions：window、periods_per_year。
   不确定的参数不要猜，未指定时使用工具默认值；window是观察值数，不等于自然日数。
+  用户明确给出因子窗口（如“近30日动量”“20日均线”）时，必须把该数字写入analytics_parameters.assumptions.window，
+  按交易日观察值数解释，并在question中写明“按30个交易日观察值”；question中的窗口必须与参数一致。
+- 技术因子（动量、波动率、RSI、MACD、布林带、换手率）的采集区间与因子窗口无关：默认采集最近1年日线，
+  至少覆盖窗口与预热（MACD需35个、RSI需15个观察值）；“近30日动量”只决定window=30，不能只采集近30天。
 - 已有分析任务产物可通过analytics直接依赖复用；避免为每个统计量重复采集同一数据。
 - 投资机会任务需要定量依据时依赖analytics；不自动为报告内部拆出重复采集或分析任务。
 
 组合请求示例（历史表现与最新估值是两条独立数据链，不需要用户拆问）：
 “比较茅台和五粮液过去一年收益、波动率、最大回撤和最新PE TTM/PB”通常规划四个任务：
-prices: market_data，获取600519/000858过去一年qfq日线，depends_on=[]；
+prices: market_data，获取贵州茅台/五粮液过去一年qfq日线，depends_on=[]；
 valuations: market_data，获取两公司最新估值快照，depends_on=[]；
 performance: analytics，分别计算两公司收益、波动率和回撤，depends_on=[prices]；
 valuation_compare: analytics，比较PE TTM/PB，depends_on=[valuations]。
@@ -73,13 +80,24 @@ assumptions必须是JSON对象（例如{{"periods_per_year":252}}），
 不要添加adjustment、risk_free_rate、metrics等未定义字段；数据口径和所需指标写入question。
 修正反馈指出的字段或依赖错误必须在下一次计划中修复，不得机械重复上次无效结构。
 
-strategy_parameters仅用于investment_strategy任务，按用户明确输入填写subjects/time_range/portfolio/risk_constraints/scenario_assumptions。
-portfolio: as_of_date为ISO日期，currency=CNY，positions为symbol六位代码与weight小数列表，cash_weight明确现金权重；
+strategy_parameters仅用于investment_strategy任务，按用户明确输入填写subjects/time_range/portfolio/risk_constraints/scenario_assumptions/historical_scenarios。
+portfolio: as_of_date为ISO日期，currency=CNY，positions每项填写symbol六位代码、name用户所说的公司名与weight小数，cash_weight明确现金权重；
 权重和现金之和必须为1，用户没给必要信息时不要猜日期、现金或权重，省略portfolio并在问题中保留缺失要求。
 风险限制均为小数且只抄录用户明确限制，不自动生成风险偏好；max_asset_drawdown是历史回撤幅度上限。
 价格冲击情景包含scenario_id/name/origin=user或agent_proposed/price_shocks（股票代码到收益小数），
 用户指定冲击标为user。未明确指定不为使用工具而发明情景。
 策略依赖按需规划，机会分析可依赖市场证据和Analytics结果；持仓/冲击计算无需强制行情任务。
+组合风险（组合波动率、回撤、VaR/CVaR）需要portfolio：market_data用get_price_history_batch批量采集全部持仓同区间qfq日线；
+analytics调用build_return_matrix构建收益矩阵并依赖该采集任务；investment_strategy同时依赖采集与收益矩阵任务。
+用户未指定回看区间时默认最近2年，question写明绝对起止日期并说明这是默认假设。
+历史情景重演：strategy_parameters.historical_scenarios只能取2008_gfc（2007-10-16至2008-11-04）、
+2015_crash（2015-06-12至2015-08-26）、2020_covid（2020-01-13至2020-03-23），只填写用户提到的情景。
+每个情景单独规划一个market_data，用get_price_history_batch采集全部持仓覆盖该区间（前后各多取约1个月）的qfq日线，
+investment_strategy直接依赖这些采集任务。
+同行相对位置（比较多家公司的相对高低/位置）：必须规划一个analytics任务调用rank_peers，不另拆逐只compute_factors或compare_valuations。
+示例“比较A、B、C、D、E的近30日动量和PE”：peer_prices: market_data，用get_price_history_batch采集5家最近1年qfq日线；
+peer_valuations: market_data，采集5家同一观察日估值快照；peer_rank: analytics，question写明调用rank_peers，
+depends_on=[peer_prices, peer_valuations]，analytics_parameters.assumptions.window=30。不合成总分，不把排名称为推荐。
 不支持EPS情景预测、组合优化、HRP或Black-Litterman时，在任务中说明能力边界，不假装可执行。
 
 根据现有上下文回答风险追问时保留相关研究背景，不自动重新生成报告。
@@ -162,6 +180,7 @@ def planner(state: PlannerState, *, max_retries: int = 1) -> dict:
             plan = TaskPlan.model_validate(raw)
             plan.validate_analytics_dependencies()
             validate_report_intent(query, plan)
+            validate_plan_securities(plan)
             emit(attempt, plan.status)
             return {"plan": plan.to_state(), "planning_status": plan.status,
                     "planning_error": None, "planning_attempts": attempt}
@@ -175,6 +194,10 @@ def planner(state: PlannerState, *, max_retries: int = 1) -> dict:
         except ReportIntentError as exc:
             correction = json.dumps([{"error_type":"report_intent", "field":"tasks.category", "hint":str(exc)}], ensure_ascii=False)
             emit(attempt, "intent_failed", [{"error_type":"report_intent", "field":"tasks.category", "hint":str(exc)}])
+        except SecurityIdentityError as exc:
+            hint = [{"error_type": "security_identity", "field": "tasks", "hint": str(exc)}]
+            correction = json.dumps(hint, ensure_ascii=False)
+            emit(attempt, "identity_failed", hint)
         except AnalyticsDependencyError as exc:
             correction = str(exc)
             emit(attempt, "dependency_failed", [{"error_type": "analytics_dependency", "field": "tasks.depends_on",

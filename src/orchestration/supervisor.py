@@ -125,6 +125,12 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analyt
                     child["configurable"] = {**config.get("configurable", {}), "strategy_expected_scope": uuid4().hex}
                     raw = strategy.invoke(inputs, config=child)
                     status, result, error = strategy_result(raw, inputs, child)
+                    if result and any(ref.get("series_keys") for ref in result["artifact_refs"]):
+                        # Chart series leave the store only through this UI event, never parent state.
+                        store = child["configurable"]["strategy_store"]
+                        get_stream_writer()({"event": "strategy_artifacts", "task_id": ident, "series": {
+                            ref["artifact_id"]: store.get_series(ref["artifact_id"], ref["scope_id"])
+                            for ref in result["artifact_refs"] if ref.get("series_keys")}})
                 elif category == "analytics":
                     inputs = analytics_inputs(task, results, config)
                     raw = analytics.invoke(inputs, config=config)
@@ -133,6 +139,9 @@ def create_supervisor_graph(*, market_data_graph=None, report_graph=None, analyt
                         store = config["configurable"]["analysis_store"]
                         snapshots = {ref["analysis_id"]: store.get(ref["analysis_id"]).model_dump(mode="json")
                                      for ref in result["analysis_refs"]}
+                        for snapshot in snapshots.values():
+                            if snapshot["tool_name"] == "build_return_matrix":
+                                snapshot["series"] = {}  # Aligned returns are calculation inputs, not charts.
                         get_stream_writer()({"event": "analysis_artifacts", "task_id": ident,
                                              "artifacts": snapshots})
                 else:
