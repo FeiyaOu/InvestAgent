@@ -167,3 +167,10 @@ UI当前导航（2026-11-13）：产品层为回答、数据与分析、报告�
 data（AKShare tools）、orchestration（父图/planner/supervisor/composer/契约）、
 specialists/{market_data,analytics,strategy,report}。原 src/stages 拆入 orchestration 与各 specialist。
 TaskError 移至 core/errors.py，使 specialists 不反向依赖 orchestration。各节文件路径已按新结构更新。
+
+
+## 分析与策略能力升级规划（2026-11-14，阶段 1 已实现，待真实数据验收）
+
+用户确认三阶段升级：阶段 1 技术因子/PS/批量采集/收益矩阵/同行 z-score/组合 VaR·CVaR/历史情景重演；
+阶段 2 最小方差与风险平价优化及调仓清单；阶段 3 经 AKShare 接口实测后接入财务、机构持仓与研报评级表。
+专家分工不变，契约与验收见[分析与策略能力升级规格](analysis-strategy-upgrade.md)。

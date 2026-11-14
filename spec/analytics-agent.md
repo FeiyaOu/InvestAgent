@@ -78,6 +78,9 @@ pandas / NumPy 优先，TA-Lib 按具体指标需求后加。
 
 ## V2 工具（待实现）
 
+> 2026-11-14：用户确认的升级范围（技术因子扩展、收益矩阵、同行 z-score 等）见 [分析与策略能力升级规格](analysis-strategy-upgrade.md)，下列原 V2 条目以该文为准。
+
+
 - evaluate_factors：Rank IC、前瞻分组收益、换手率。
 - analyze_factor_redundancy：相关性与因子重叠。
 - compare_historical_valuations：历史分位和区间。

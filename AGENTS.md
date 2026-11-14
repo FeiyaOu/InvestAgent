@@ -18,6 +18,7 @@
 | `spec/project-architecture.md` | 架构决策文档 — 所有技术选型的依据 |
 | `spec/strategy-agent-development.md` | Strategy/Risk实施步骤与验收记录 |
 | `spec/analytics-agent.md` / `spec/report-delivery.md` | Analytics 实施规格 / 报告阅读与下载 |
+| `spec/analysis-strategy-upgrade.md` | 分析与策略能力升级（V2 阶段 1–3）|
 | `spec/workflow-evolution.md` | 工作流演进与历次决策记录（进展常比主规格更新）|
 | `src/agent.py` | 公共门面（调用 orchestration/parent_graph.py）|
 | `src/orchestration/parent_graph.py` | 父图接线；planner / supervisor / composer / task_contracts 同目录 |
@@ -58,6 +59,7 @@ python linters/check_agent_structure.py       # 结构 lint 检查
 ## 架构约束
 
 - 依赖方向：`core / data ← specialists ← orchestration ← agent.py`；specialists 不 import orchestration
-- AKShare 只在 `src/data/tools.py` 中调用，节点模块不直接调用 AKShare
+- AKShare 只在 `src/data/tools.py` 与离线刷新脚本 `scripts/refresh_security_directory.py` 中调用，节点模块不直接调用 AKShare
+- 证券代码→简称核对只读仓库快照 `src/data/a_share_directory.json`，请求路径不联网拉代码表；需要时运行刷新脚本更新
 - LLM 调用只在节点模块中发生：`orchestration/planner.py`、`composer.py`、`specialists/*/nodes.py`、`specialists/report/stages/`；`agent.py` 只负责编排
 - 禁止反向依赖（`validator` 不能 import `perception`）
