@@ -211,7 +211,7 @@ def composer(state: ParentState) -> dict:
         raw = _create_chain().invoke({"user_query": state.get("user_query", ""),
                                       "task_results": json.dumps(records, ensure_ascii=False)})
         answer = ComposedAnswer.model_validate(raw).answer
-        return {"final_response": answer + "\n\n---\n\n" + details,
+        return {"final_response": answer + "\n\n---\n\n" + details, "composition_summary": answer,
                 "composition_status": "completed", "composition_error": None}
     except Exception:
         return {"final_response": details, "composition_status": "fallback",

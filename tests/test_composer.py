@@ -250,3 +250,21 @@ def test_prompt_forbids_signal_and_rank_language_and_pins_window_labels():
     for rule in ("超买", "超卖", "第1名", "相对较高", "rsi_window"):
         assert rule in _SYSTEM
     assert "{" not in _SYSTEM  # ChatPromptTemplate would treat braces as variables.
+
+
+def test_model_summary_is_exposed_separately_from_task_details():
+    chain = Mock()
+    chain.invoke.return_value = {"answer": "茅台最新价格100元。"}
+    with patch("src.orchestration.composer._create_chain", return_value=chain):
+        result = composer(state(record()))
+    assert result["composition_summary"] == "茅台最新价格100元。"
+    assert result["final_response"].startswith("茅台最新价格100元。") and "---" in result["final_response"]
+    chain.invoke.side_effect = RuntimeError("offline")
+    with patch("src.orchestration.composer._create_chain", return_value=chain):
+        fallback = composer(state(record()))
+    assert fallback.get("composition_summary") is None  # Details are never presented as a model summary.
+
+
+def test_parent_state_starts_without_a_summary():
+    from src.orchestration.parent_state import create_parent_state
+    assert create_parent_state("查茅台")["composition_summary"] is None

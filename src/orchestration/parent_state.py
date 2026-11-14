@@ -29,6 +29,7 @@ class ParentState(TypedDict, total=False):
     final_response: str | None
     composition_status: Literal["completed", "fallback", "needs_clarification", "failed"] | None
     composition_error: dict | None
+    composition_summary: str | None  # Model-written answer only; final_response also carries task details.
 
 
 def create_parent_state(user_query: str, *, conversation_context: str = "",
@@ -40,4 +41,5 @@ def create_parent_state(user_query: str, *, conversation_context: str = "",
     return {**request.model_dump(), "plan": None, "planning_status": None,
             "planning_error": None, "planning_attempts": 0, "task_results": {},
             "supervisor_status": None, "supervisor_error": None,
-            "final_response": None, "composition_status": None, "composition_error": None}
+            "final_response": None, "composition_status": None, "composition_error": None,
+            "composition_summary": None}
