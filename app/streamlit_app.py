@@ -18,7 +18,7 @@ from app.strategy_dashboard import render_strategy_task
 from app.report_viewer import render_report
 from app.example_queries import example_queries, BOUNDARY_EXAMPLES
 
-from src.tools import USE_REAL_DATA_ENV, parse_bool, data_mode, set_use_real_data
+from src.data.tools import USE_REAL_DATA_ENV, parse_bool, data_mode, set_use_real_data
 
 _ENV_PATH = os.path.join(_project_root, ".env")
 load_dotenv(_ENV_PATH)
@@ -288,7 +288,7 @@ containers = [tab.empty() for tab in (answer_tab, data_tab, analysis_tab, report
 
 if run_btn and user_query.strip():
     from src.agent import create_invest_agent
-    from src.parent_state import create_parent_state
+    from src.orchestration.parent_state import create_parent_state
 
     history = st.session_state["conversation_history"][-3:]
     summary = "\n\n".join(f"用户：{turn['query'][:800]}\n回答摘要：{turn.get('response_preview', '')[:1200]}"

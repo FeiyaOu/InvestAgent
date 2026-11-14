@@ -25,7 +25,7 @@ def test_market_data_parent_response(api_key):
 
 def test_report_results_are_task_local(api_key):
     from src.agent import run_invest_agent
-    from src.stages.reporter import validate_report
+    from src.specialists.report.stages.reporter import validate_report
     state = run_invest_agent("请生成新能源行业中期投研报告，重点关注光伏。")
     assert state["planning_status"] == "ready"
     reports = [r for r in state["task_results"].values() if r["category"] == "report"]

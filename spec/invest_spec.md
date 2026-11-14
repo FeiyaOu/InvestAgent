@@ -52,7 +52,7 @@ Supervisor 发出 task_started 自定义事件标识 task_id/category，供顺�
 
 ## 工具与数据边界
 
-Market Data 使用 src/tools.py 的七个工具：INVEST_TOOLS 五个文本工具（行业、指数、宏观、新闻、个股），
+Market Data 使用 src/data/tools.py 的七个工具：INVEST_TOOLS 五个文本工具（行业、指数、宏观、新闻、个股），
 以及结构化采集工具 get_price_history、get_valuation_snapshot（写入请求级 DatasetStore，供 Analytics 引用）。
 AKShare 访问只在工具层，异常必须 fallback；模拟模式必须明确标记。
 历史价格、财务与量化扩展仍以演进规格为准，不因 UI 迁移自动新增。
@@ -153,7 +153,7 @@ Deliberative 路径的最终输出必须严格遵循以下 JSON 结构：
 
 ## 约束常量（代码中必须定义）
 
-`src/stages/reporter.py` 必须定义以下常量，供 `validate_report()` 和 linter 使用：
+`src/specialists/report/stages/reporter.py` 必须定义以下常量，供 `validate_report()` 和 linter 使用：
 
 ```python
 REQUIRED_DIMENSIONS = ["fundamental", "market", "news", "analyst"]
@@ -163,14 +163,14 @@ MIN_SOURCES = 3
 MIN_THESIS_LENGTH = 50
 ```
 
-`src/planner_schemas.py` 定义四类 `TaskCategory` Literal；
-`src/state.py` 的 MAX_VALIDATOR_RETRIES=2 只属于报告子图。
+`src/orchestration/planner_schemas.py` 定义四类 `TaskCategory` Literal；
+`src/specialists/report/state.py` 的 MAX_VALIDATOR_RETRIES=2 只属于报告子图。
 
 ---
 
 ## validate_report() 接口规范
 
-`src/stages/reporter.py` 中的 `validate_report()` 是**唯一的报告校验入口**：
+`src/specialists/report/stages/reporter.py` 中的 `validate_report()` 是**唯一的报告校验入口**：
 
 ```python
 def validate_report(report: dict) -> list[dict]:
@@ -220,7 +220,7 @@ def validate_report(report: dict) -> list[dict]:
 1. **TDD 强制**：所有新功能必须先写失败的测试，再写实现
 2. **Spec 同步**：修改报告结构或约束时必须同步更新本文档
 3. **测试隔离**：单元测试禁止调用真实 API（`DASHSCOPE_API_KEY` 和 AKShare 均须 mock）
-4. **结构对称**：`src/stages/` 下每个模块对应 `tests/` 下的测试
+4. **结构对称**：`src/specialists/report/stages/` 及各 specialist 的 `nodes.py` 均有对应 `tests/` 测试
 5. **单一校验入口**：报告校验只通过 `validate_report()`，不在其他地方散落校验逻辑
 6. **Fallback 必须**：所有 AKShare 调用必须有 `try/except`，网络异常不得导致 Agent 崩溃
 

@@ -2,8 +2,8 @@
 from contextlib import ExitStack
 from unittest.mock import patch
 
-from src.report_graph import create_report_graph
-from src.parent_graph import create_parent_graph
+from src.specialists.report.graph import create_report_graph
+from src.orchestration.parent_graph import create_parent_graph
 
 
 def build(retries=0, parent=False):
@@ -24,9 +24,9 @@ def build(retries=0, parent=False):
     }
     with ExitStack() as stack:
         for name, output in nodes.items():
-            stack.enter_context(patch(f"src.report_graph.{name}", stage(name, output)))
+            stack.enter_context(patch(f"src.specialists.report.graph.{name}", stage(name, output)))
         if parent:
-            factory = stack.enter_context(patch("src.stages.planner._create_chain"))
+            factory = stack.enter_context(patch("src.orchestration.planner._create_chain"))
             factory.return_value.invoke.return_value = {"status": "ready", "tasks": [
                 {"task_id": "r", "category": "report", "question": "生成新能源报告", "depends_on": []}],
                 "clarification_questions": []}
@@ -56,7 +56,7 @@ def test_parent_exposes_nested_updates_and_final_state():
     chain.invoke.return_value = {"status": "ready", "tasks": [
         {"task_id": "r", "category": "report", "question": "生成报告", "depends_on": []}],
         "clarification_questions": []}
-    with patch("src.stages.planner._create_chain", return_value=chain):
+    with patch("src.orchestration.planner._create_chain", return_value=chain):
         chunks = list(graph.stream({"user_query": "生成报告"}, subgraphs=True))
     assert any(namespace and "perception" in update for namespace, update in chunks)
     update = next(update["supervisor"] for namespace, update in chunks if not namespace and "supervisor" in update)

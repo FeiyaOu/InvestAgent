@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from src.datasets import DatasetStore
-from src.tools import get_price_history
+from src.core.datasets import DatasetStore
+from src.data.tools import get_price_history
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +17,7 @@ def isolated_sina_uses_mock_provider(monkeypatch):
         import akshare
         assert isinstance(akshare, Mock), "unit test must mock AKShare"
         return getattr(akshare, function)(**kwargs)
-    monkeypatch.setattr("src.tools._call_sina", invoke)
+    monkeypatch.setattr("src.data.tools._call_sina", invoke)
 
 
 def fetch(store, **updates):

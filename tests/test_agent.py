@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.agent import create_invest_agent, run_invest_agent
-from src.planner_schemas import PlanTask
+from src.orchestration.planner_schemas import PlanTask
 
 
 @pytest.mark.parametrize("category", ["market_data", "analytics", "investment_strategy", "report"])

@@ -7,9 +7,9 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.exceptions import OutputParserException
 
-from src.llm import create_llm
-from src.planner_schemas import TaskPlan, planner_output_schema
-from src.stages.planner import _create_chain
+from src.core.llm import create_llm
+from src.orchestration.planner_schemas import TaskPlan, planner_output_schema
+from src.orchestration.planner import _create_chain
 
 INPUT = {'user_query': '分析茅台表现', 'conversation_context': '', 'correction': '', 'current_date': '2026-11-13'}
 PAYLOAD = {'status': 'ready', 'tasks': [
@@ -35,7 +35,7 @@ def invoke_adapter(message, mode, monkeypatch):
     def generate(self, messages, **kwargs):
         captured.append(kwargs)
         return ChatResult(generations=[ChatGeneration(message=message)])
-    with patch('src.stages.planner.create_llm', return_value=model), patch.object(type(model), '_generate', generate):
+    with patch('src.orchestration.planner.create_llm', return_value=model), patch.object(type(model), '_generate', generate):
         result = _create_chain().invoke(INPUT)
     return result, captured
 
@@ -61,14 +61,14 @@ def test_legacy_json_mode_remains_available_for_comparison(monkeypatch):
 
 
 def test_structured_output_retries_missing_call_and_still_validates_plan(monkeypatch):
-    from src.stages.planner import planner
+    from src.orchestration.planner import planner
     monkeypatch.setenv('PLANNER_OUTPUT_MODE', 'tool_calling')
     model = create_llm(dashscope_api_key='test-key')
     replies = iter([AIMessage(content='plain text'), AIMessage(content='', tool_calls=[
         {'id': 'p2', 'name': 'TaskPlan', 'args': PAYLOAD}])])
     def generate(self, messages, **kwargs):
         return ChatResult(generations=[ChatGeneration(message=next(replies))])
-    with patch('src.stages.planner.create_llm', return_value=model), patch.object(type(model), '_generate', generate):
+    with patch('src.orchestration.planner.create_llm', return_value=model), patch.object(type(model), '_generate', generate):
         result = planner({'user_query': '分析茅台表现'})
     assert result['planning_status'] == 'ready'
     assert result['planning_attempts'] == 2

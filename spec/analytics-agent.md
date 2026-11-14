@@ -99,7 +99,7 @@ PyPortfolioOpt、HRP、Black-Litterman 留给未来 Strategy / Risk，不放入 
 
 ## 步骤1：数据层已实现
 
-`src/datasets.py` 提供：
+`src/core/datasets.py` 提供：
 
 - PriceDataset：单标的日频价格，stock/index/fund；元数据包含 symbol、market、currency、provider、
   source_url、带时区 retrieved_at、real/mock、adjustment、price_unit、volume_unit。
@@ -129,7 +129,7 @@ PyPortfolioOpt、HRP、Black-Litterman 留给未来 Strategy / Risk，不放入 
 
 ## 步骤2：结构化历史价格已接入（2026-11-12）
 
-新增 `src/tools.py:get_price_history`，仅加入 Market Data 的默认工具集合，
+新增 `src/data/tools.py:get_price_history`，仅加入 Market Data 的默认工具集合，
 原 INVEST_TOOLS 和报告 perception 的四工具调用不改。
 
 - 输入 query、start_date / end_date（ISO日期）、asset_type（stock/index）、adjustment（none/qfq/hfq）。
@@ -160,7 +160,7 @@ PyPortfolioOpt、HRP、Black-Litterman 留给未来 Strategy / Risk，不放入 
 
 ## 步骤3：表现与基准工具（2026-11-12 已实现，未接 Agent）
 
-`src/analytics_tools.py` 提供两个 @tool，不调用 LLM 或数据 API。
+`src/specialists/analytics/tools.py` 提供两个 @tool，不调用 LLM 或数据 API。
 输入 dataset_id，基准比较另需 benchmark_dataset_id，periods_per_year 默认252，可选1–366。
 运行时在 RunnableConfig.configurable 显式提供同请求 dataset_store 和 analysis_store。
 当前父图只注入 dataset_store；analysis_store 尚未接入运行入口，需待 Analytics 建设时统一注入。
@@ -187,7 +187,7 @@ compare_with_benchmark：共同日期 inner join，不 forward fill，至少3个
 
 ### 产物与状态
 
-`src/analytics_artifacts.py` 定义 AnalysisArtifact / SeriesPoint / AnalysisStore，
+`src/specialists/analytics/artifacts.py` 定义 AnalysisArtifact / SeriesPoint / AnalysisStore，
 记录 canonical dataset_refs、创建时间、区间、收益样本数、metrics、metric_units、assumptions、limitations。
 收益、波动率和回撤用 fraction（0.1代表10%），beta/相关性无量纲。
 模拟标记、未复权风险、连续交易日年化假设及非总回报限制随产物保存。
@@ -235,7 +235,7 @@ series 保留在 AnalysisStore，工具返回 analysis_ref，不代表已证明�
 
 ### get_valuation_snapshot
 
-新增 src/tools.py 工具，加入 Market Data 默认集合，原报告 INVEST_TOOLS 不变。
+新增 src/data/tools.py 工具，加入 Market Data 默认集合，原报告 INVEST_TOOLS 不变。
 query 支持沪深 A 股代码/既有名称；as_of_date 默认为上海当天，不支持未来日期。
 实盘通过 AKShare stock_value_em 取观察日期不晚于请求日期的最新唯一记录，
 不将取数时间冒充估值观察日期；重复日期或无数据明确 unavailable。
@@ -275,8 +275,8 @@ sample_size 在表现工具是收益间隔数，在估值比较是公司数，�
 
 ### 入口与局部状态
 
-`src/analytics_agent.py:create_analytics_agent()` 构建 initialize → agent ↔ tools → finalize 子图。
-`src/stages/analytics.py` 包含模型节点，`src/analytics_state.py` 定义输入与输出模型。
+`src/specialists/analytics/agent.py:create_analytics_agent()` 构建 initialize → agent ↔ tools → finalize 子图。
+`src/specialists/analytics/nodes.py` 包含模型节点，`src/specialists/analytics/state.py` 定义输入与输出模型。
 默认工具为 V1 四个计算工具，不含市场 API 或其他 Agent 的调用接口。
 不设置 checkpoint；独立任务在 initialize 清空旧消息、计数器和计算结果。
 
@@ -348,7 +348,7 @@ from src.analytics_artifacts import AnalysisStore
 fraction解释、模拟/短样本/估值口径限制、缺失数据要求与Strategy/Risk职责边界。
 不重复维护计算公式实现，不赋予新工具权限，不改变输出schema或执行预算。
 
-`src/stages/analytics.py:load_analytics_methodology()` 从基于模块位置的固定仓库路径读取，
+`src/specialists/analytics/nodes.py:load_analytics_methodology()` 从基于模块位置的固定仓库路径读取，
 移除可选frontmatter，正文作为独立SystemMessage进入Analytics上下文。
 无模型控制的路径或动态skill搜索；每个有效可执行请求读取一次，不缓存，修改文件对下一次请求生效。
 源schema和方法内容分别注入，不将方法文件当作str.format模板处理。

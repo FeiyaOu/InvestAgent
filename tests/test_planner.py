@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import ValidationError
 
-from src.planner_schemas import TaskPlan
-from src.stages.planner import planner
+from src.orchestration.planner_schemas import TaskPlan
+from src.orchestration.planner import planner
 
 
 def task(ident="t1", category="market_data", deps=None):
@@ -48,7 +48,7 @@ def test_status_contract(payload):
 def invoke(outputs, state=None, **kwargs):
     chain = Mock()
     chain.invoke.side_effect = outputs
-    with patch("src.stages.planner._create_chain", return_value=chain):
+    with patch("src.orchestration.planner._create_chain", return_value=chain):
         result = planner({"user_query": "查股价，比较估值并分析一年投资机会", **(state or {})}, **kwargs)
     return result, chain
 
@@ -130,7 +130,7 @@ def test_real_chain_parses_mock_model_json_and_repairs_malformed_json(monkeypatc
     def respond(prompt):
         prompts.append(prompt.to_messages())
         return AIMessage(content=next(replies))
-    with patch("src.stages.planner.create_llm", return_value=RunnableLambda(respond)):
+    with patch("src.orchestration.planner.create_llm", return_value=RunnableLambda(respond)):
         result = planner({"user_query": "茅台现在多少钱？"})
     assert result["planning_status"] == "ready"
     assert len(prompts) == 2
@@ -140,13 +140,13 @@ def test_real_chain_parses_mock_model_json_and_repairs_malformed_json(monkeypatc
 
 def test_planner_can_be_registered_as_graph_node():
     from langgraph.graph import START, END, StateGraph
-    from src.planner_schemas import PlannerState
+    from src.orchestration.planner_schemas import PlannerState
 
     graph = StateGraph(PlannerState)
     graph.add_node("planner", planner)
     graph.add_edge(START, "planner")
     graph.add_edge("planner", END)
-    with patch("src.stages.planner._create_chain") as factory:
+    with patch("src.orchestration.planner._create_chain") as factory:
         factory.return_value.invoke.return_value = plan()
         result = graph.compile().invoke({"user_query": "茅台价格"})
     assert result["planning_status"] == "ready"
@@ -198,7 +198,7 @@ def test_planner_prompt_provides_current_date_and_collection_rules(monkeypatch):
     def respond(prompt):
         prompts.append(prompt.to_messages())
         return AIMessage(content=json.dumps(plan()))
-    with patch("src.stages.planner.create_llm", return_value=RunnableLambda(respond)):
+    with patch("src.orchestration.planner.create_llm", return_value=RunnableLambda(respond)):
         result = planner({"user_query": "茅台股价"})
     assert result["planning_status"] == "ready"
     assert "get_price_history" in prompts[0][0].content
@@ -248,7 +248,7 @@ def test_planner_emits_failure_and_recovery_events_for_each_attempt():
     bad = plan()
     bad['tasks'][0]['category'] = 'bad'
     events = []
-    with patch('src.stages.planner.get_stream_writer', return_value=events.append):
+    with patch('src.orchestration.planner.get_stream_writer', return_value=events.append):
         result, _ = invoke([bad, plan()])
     assert result['planning_status'] == 'ready'
     assert [e['status'] for e in events] == ['started', 'validation_failed', 'started', 'ready']
@@ -261,7 +261,7 @@ def test_exhausted_planning_attempts_keep_both_diagnostics():
     bad = plan()
     bad['tasks'][0]['category'] = 'bad'
     events = []
-    with patch('src.stages.planner.get_stream_writer', return_value=events.append):
+    with patch('src.orchestration.planner.get_stream_writer', return_value=events.append):
         result, _ = invoke([bad, bad])
     assert result['planning_status'] == 'failed'
     assert [e['attempt'] for e in events if e['status'] == 'validation_failed'] == [1, 2]
@@ -309,5 +309,5 @@ def test_plain_negation_does_not_force_report_into_valid_analysis_plan():
     ('不需要查价格，请生成报告。','requested'),
 ])
 def test_explicit_report_intent_handles_negation_and_explanation(query,expected):
-    from src.report_intent import explicit_report_intent
+    from src.orchestration.report_intent import explicit_report_intent
     assert explicit_report_intent(query)==expected

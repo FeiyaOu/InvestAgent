@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.tools import _call_sina
+from src.data.tools import _call_sina
 
 
 def test_native_crash_becomes_python_error_without_exposing_stderr():

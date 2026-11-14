@@ -1,7 +1,7 @@
 from datetime import date
 import pytest
 from pydantic import ValidationError
-from src.strategy_state import Portfolio, StrategyParameters, StrategyInput
+from src.specialists.strategy.state import Portfolio, StrategyParameters, StrategyInput
 
 
 def portfolio(**kw):
@@ -32,6 +32,6 @@ def test_optional_null_limits_and_scenarios_do_not_invent_inputs():
 
 
 def test_narrative_schema_does_not_require_model_to_select_executed_artifacts():
-    from src.strategy_state import strategy_answer_schema, StrategyAnswer
+    from src.specialists.strategy.state import strategy_answer_schema, StrategyAnswer
     assert 'artifact_ids' not in strategy_answer_schema()['properties']
     assert 'artifact_ids' in StrategyAnswer.model_json_schema()['properties']

@@ -1,7 +1,7 @@
 from unittest.mock import patch, Mock
 import pytest
-from src.parent_graph import create_parent_graph
-from src.planner_schemas import TaskPlan
+from src.orchestration.parent_graph import create_parent_graph
+from src.orchestration.planner_schemas import TaskPlan
 from tests.test_strategy_agent import answer
 from tests.test_strategy_tools import context
 
@@ -18,7 +18,7 @@ def test_plan_parameters_and_real_parent_dispatch_to_strategy_with_stores():
     payload={'status':'ready','tasks':[task],'clarification_questions':[]}
     assert TaskPlan.model_validate(payload).to_state()['tasks'][0]['strategy_parameters']['portfolio']['as_of_date']=='2026-11-13'
     llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
-    with patch('src.stages.planner._create_chain') as planner, patch('src.stages.strategy.create_llm',return_value=llm), patch('src.stages.composer._create_chain',side_effect=RuntimeError()):
+    with patch('src.orchestration.planner._create_chain') as planner, patch('src.specialists.strategy.nodes.create_llm',return_value=llm), patch('src.orchestration.composer._create_chain',side_effect=RuntimeError()):
         planner.return_value.invoke.return_value=payload
         result=create_parent_graph().invoke({'user_query':'检查组合'})
     record=result['task_results']['s']

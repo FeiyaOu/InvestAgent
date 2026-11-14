@@ -16,10 +16,10 @@ Planner 产生四类任务和依赖。Supervisor 是确定性顺序调度图，�
 
 | 类别 | 实现 | 当前状态 |
 |---|---|---|
-| market_data | src/market_data_agent.py | 已接入，工具循环与输出验证 |
-| analytics | src/analytics_agent.py | 已接入调度、分析汇总与 Plotly 看板 |
-| investment_strategy | src/strategy_agent.py | V1已接入：证据解释、约束与静态压力测试 |
-| report | src/report_graph.py | 已接入，原六节点流程 |
+| market_data | src/specialists/market_data/agent.py | 已接入，工具循环与输出验证 |
+| analytics | src/specialists/analytics/agent.py | 已接入调度、分析汇总与 Plotly 看板 |
+| investment_strategy | src/specialists/strategy/agent.py | V1已接入：证据解释、约束与静态压力测试 |
+| report | src/specialists/report/graph.py | 已接入，原六节点流程 |
 
 独立任务依次执行；依赖任务等待前置结果。partial 可传递可用证据，失败依赖阻断下游。
 已完成任务结果先供 UI 展示，再由 Composer 汇总；不进行无界重试或动态重新规划。
@@ -47,7 +47,7 @@ perception → modeling → reasoning → decision → report → validator
 
 节点函数、prompt、工具调用、输出格式与实际校验重试行为保持不变。
 校验只通过 validate_report()；C1–C7 见 [主规格](invest_spec.md)。
-工具 fallback 和模拟标记保留。AKShare 只在 src/tools.py 调用。
+工具 fallback 和模拟标记保留。AKShare 只在 src/data/tools.py 调用。
 Market Data 使用五个文本工具及 get_price_history / get_valuation_snapshot 两个结构化采集工具；财务报表等未实现能力不自动提供。
 报告参数缺失时当前适配仍用完整任务描述，准确抽取主题/行业/时间是待完善事项。
 
@@ -159,3 +159,11 @@ app/report_viewer.py消费已生成final_report，复用validate_report，提供
 UI当前导航（2026-11-13）：产品层为回答、数据与分析、报告中心；默认收起的开发者调试层含规划调度、
 专家记录与报告生成过程。app/example_queries.py提供六条默认示例、边界问题及上海日期生成；点击不会自动执行。
 原流式更新/请求内快照保留，详见报告交付规格。
+
+
+## src 目录重排（2026-11-14）
+
+按领域分包，纯结构调整，不改任何逻辑：core（llm/datasets/errors/validation_diagnostics）、
+data（AKShare tools）、orchestration（父图/planner/supervisor/composer/契约）、
+specialists/{market_data,analytics,strategy,report}。原 src/stages 拆入 orchestration 与各 specialist。
+TaskError 移至 core/errors.py，使 specialists 不反向依赖 orchestration。各节文件路径已按新结构更新。

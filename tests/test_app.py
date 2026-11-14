@@ -105,15 +105,15 @@ def test_clarification_display_skips_task_execution():
 
 
 def test_real_parent_stream_drives_ui_with_mocked_specialists():
-    from src.parent_graph import create_parent_graph
+    from src.orchestration.parent_graph import create_parent_graph
     md = Mock(); md.invoke.return_value = {"status": "completed", "error": None, "result": {
         "answer": "实际父图100元", "evidence": [], "evidence_ids": [], "missing_information": []}}
     planning = Mock(); planning.invoke.return_value = {"status": "ready", "tasks": [
         {"task_id": "m", "category": "market_data", "question": "查茅台", "depends_on": []}],
         "clarification_questions": []}
     composing = Mock(); composing.invoke.return_value = {"answer": "实际父图100元"}
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.composer._create_chain", return_value=composing):
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.orchestration.composer._create_chain", return_value=composing):
         at = submit(create_parent_graph(market_data_graph=md, report_graph=Mock()))
     assert at.session_state["last_result"]["task_results"]["m"]["status"] == "completed"
     assert "实际父图100元" in at.session_state["last_result"]["final_response"]
@@ -199,10 +199,10 @@ def test_planner_diagnostic_events_display_and_survive_rerun():
 def test_strategy_results_display_deterministic_checks_and_scenarios():
     from tests.test_strategy_tools import context
     from tests.test_strategy_agent import answer
-    from src.strategy_agent import create_strategy_agent
+    from src.specialists.strategy.agent import create_strategy_agent
     _,cfg=context()
     llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
-    with patch('src.stages.strategy.create_llm',return_value=llm):
+    with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
     record=task('s','investment_strategy',result=result['result'])
     at=submit(fake({'s':record}, final='策略结果'))

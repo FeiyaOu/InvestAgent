@@ -1,7 +1,7 @@
 """Supervisor dispatch is deterministic; specialists are mocked."""
 from unittest.mock import Mock
 
-from src.supervisor import create_supervisor_graph
+from src.orchestration.supervisor import create_supervisor_graph
 
 
 def task(ident, category="market_data", deps=None):
@@ -134,21 +134,21 @@ def test_actual_subgraphs_can_execute_with_nested_config(valid_report):
     from unittest.mock import patch
     from contextlib import ExitStack
     from langchain_core.messages import AIMessage
-    from src.market_data_agent import create_market_data_agent
-    from src.report_graph import create_report_graph
+    from src.specialists.market_data.agent import create_market_data_agent
+    from src.specialists.report.graph import create_report_graph
 
     model = Mock()
     model.bind_tools.return_value = model
     model.invoke.return_value = AIMessage(content=json.dumps({"answer": "缺少行情数据", "evidence_ids": [],
                                                             "missing_information": ["无行情"]}))
     with ExitStack() as stack:
-        stack.enter_context(patch("src.stages.market_data.create_llm", return_value=model))
+        stack.enter_context(patch("src.specialists.market_data.nodes.create_llm", return_value=model))
         outputs = {"perception": {"perception_data": {}}, "modeling": {"world_model": {}},
                    "reasoning": {"reasoning_plans": []}, "decision": {"selected_plan": {}},
                    "report_generation": {"final_report": json.dumps(valid_report)},
                    "validator": {"current_phase": "completed", "validation_errors": []}}
         for name, output in outputs.items():
-            stack.enter_context(patch(f"src.report_graph.{name}", Mock(return_value=output)))
+            stack.enter_context(patch(f"src.specialists.report.graph.{name}", Mock(return_value=output)))
         graph = create_supervisor_graph(market_data_graph=create_market_data_agent(tools=[]),
                                         report_graph=create_report_graph())
         events = list(graph.stream({"plan": plan(task("m"), task("r", "report"), task("r2", "report"))}, subgraphs=True))

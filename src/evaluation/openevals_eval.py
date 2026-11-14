@@ -27,7 +27,7 @@ def _get_qwen_judge() -> Any | None:
         return None
 
     try:
-        from src.llm import FAST_MODEL, create_llm
+        from src.core.llm import FAST_MODEL, create_llm
 
         return create_llm(FAST_MODEL, dashscope_api_key=api_key, temperature=0)
     except Exception as e:

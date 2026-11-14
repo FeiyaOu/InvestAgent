@@ -1,19 +1,19 @@
 import json
 from unittest.mock import Mock, patch
 import pytest
-from src.strategy_agent import create_strategy_agent
-from src.strategy_handoff import strategy_result, canonical_request, strategy_inputs
+from src.specialists.strategy.agent import create_strategy_agent
+from src.specialists.strategy.handoff import strategy_result, canonical_request, strategy_inputs
 from tests.test_strategy_agent import answer
 from tests.test_strategy_tools import context
 from tests.test_analytics_agent import setup_data
-from src.analytics_tools import analyze_price_performance
+from src.specialists.analytics.tools import analyze_price_performance
 
 
 def test_forged_child_numbers_are_rebuilt_and_cross_task_scope_is_rejected():
     _,cfg=context()
     cfg['configurable']['strategy_expected_scope']='scope1'
     llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
-    with patch('src.stages.strategy.create_llm',return_value=llm):
+    with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         raw=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
     raw['result']['scenario_results'][0]['portfolio_return']=999
     status,result,_=strategy_result(raw,cfg['configurable']['strategy_input'],cfg)
@@ -49,7 +49,7 @@ def test_only_direct_dependencies_grant_references_and_report_is_excluded():
 def test_child_cannot_hide_executed_constraint_checks_by_dropping_references():
     _,cfg=context()
     llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
-    with patch('src.stages.strategy.create_llm',return_value=llm):
+    with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         raw=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
     raw['result']['artifact_refs']=[]
     raw['result']['constraint_checks']=[]

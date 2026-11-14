@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.stages.reporter import (
+from src.specialists.report.stages.reporter import (
     MIN_SUMMARY_LENGTH,
     MIN_THESIS_LENGTH,
     REQUIRED_DIMENSIONS,

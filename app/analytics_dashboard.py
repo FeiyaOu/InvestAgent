@@ -5,7 +5,7 @@ import math
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.analytics_artifacts import AnalysisArtifact
+from src.specialists.analytics.artifacts import AnalysisArtifact
 
 _LABELS = {"period_return": "区间收益", "annualized_volatility": "年化波动率", "max_drawdown": "最大回撤",
     "asset_period_return": "标的收益", "benchmark_period_return": "基准收益", "excess_period_return": "超额区间收益",

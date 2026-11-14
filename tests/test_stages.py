@@ -15,12 +15,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.stages.decision import decision
-from src.stages.modeling import modeling
-from src.stages.perception import perception
-from src.stages.reasoning import reasoning
-from src.stages.reporter import report_generation
-from src.stages.validator import validator
+from src.specialists.report.stages.decision import decision
+from src.specialists.report.stages.modeling import modeling
+from src.specialists.report.stages.perception import perception
+from src.specialists.report.stages.reasoning import reasoning
+from src.specialists.report.stages.reporter import report_generation
+from src.specialists.report.stages.validator import validator
 from tests.conftest import make_valid_report
 
 # ---- 测试用初始状态工厂 ----
@@ -67,7 +67,7 @@ class TestPerception:
         monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
         monkeypatch.setenv("USE_REAL_DATA", "false")
 
-        with patch("src.stages.perception._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.perception._create_chain") as mock_factory:
             mock_factory.return_value = MagicMock(
                 invoke=MagicMock(side_effect=Exception("API key missing"))
             )
@@ -86,7 +86,7 @@ class TestPerception:
             "recent_news": ["新闻1", "新闻2", "新闻3"],
             "industry_trends": {"光伏": "上行", "风电": "平稳", "储能": "高增"},
         }
-        with patch("src.stages.perception._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.perception._create_chain") as mock_factory:
             mock_factory.return_value = make_mock_chain(mock_output)
             state = make_base_state()
             result = perception(state)
@@ -98,7 +98,7 @@ class TestPerception:
     def test_returns_dict(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """节点函数必须返回 dict"""
         monkeypatch.setenv("USE_REAL_DATA", "false")
-        with patch("src.stages.perception._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.perception._create_chain") as mock_factory:
             mock_factory.return_value = make_mock_chain({})
             result = perception(make_base_state())
         assert isinstance(result, dict)
@@ -126,7 +126,7 @@ class TestModeling:
             "opportunity_areas": ["机会1", "机会2", "机会3"],
             "market_sentiment": "中性偏乐观",
         }
-        with patch("src.stages.modeling._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.modeling._create_chain") as mock_factory:
             mock_factory.return_value = make_mock_chain(mock_output)
             state = make_base_state(perception_data={"market_overview": "test"})
             result = modeling(state)
@@ -137,7 +137,7 @@ class TestModeling:
 
     def test_llm_exception_returns_error(self) -> None:
         """LLM 异常时应返回 error 并保持在 modeling 阶段"""
-        with patch("src.stages.modeling._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.modeling._create_chain") as mock_factory:
             mock_factory.return_value = MagicMock(
                 invoke=MagicMock(side_effect=RuntimeError("LLM error"))
             )
@@ -168,7 +168,7 @@ class TestReasoning:
             {"plan_id": "plan_B", "hypothesis": "假设B", "confidence_level": 0.6, "pros": [], "cons": []},
             {"plan_id": "plan_C", "hypothesis": "假设C", "confidence_level": 0.7, "pros": [], "cons": []},
         ]
-        with patch("src.stages.reasoning._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.reasoning._create_chain") as mock_factory:
             mock_factory.return_value = make_mock_chain(mock_plans)
             state = make_base_state(world_model={"market_state": "test"})
             result = reasoning(state)
@@ -178,7 +178,7 @@ class TestReasoning:
 
     def test_llm_exception_returns_error(self) -> None:
         """LLM 异常时应返回 error"""
-        with patch("src.stages.reasoning._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.reasoning._create_chain") as mock_factory:
             mock_factory.return_value = MagicMock(
                 invoke=MagicMock(side_effect=Exception("LLM error"))
             )
@@ -211,7 +211,7 @@ class TestDecision:
             "recommendation": "建议超配",
             "timeframe": "6个月",
         }
-        with patch("src.stages.decision._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.decision._create_chain") as mock_factory:
             mock_factory.return_value = make_mock_chain(mock_output)
             state = make_base_state(
                 world_model={"market_state": "test"},
@@ -224,7 +224,7 @@ class TestDecision:
 
     def test_llm_exception_returns_error(self) -> None:
         """LLM 异常时应返回 error"""
-        with patch("src.stages.decision._create_chain") as mock_factory:
+        with patch("src.specialists.report.stages.decision._create_chain") as mock_factory:
             mock_factory.return_value = MagicMock(
                 invoke=MagicMock(side_effect=Exception("LLM error"))
             )
@@ -250,7 +250,7 @@ class TestReportGeneration:
     def test_success_returns_json_string(self) -> None:
         """成功时 final_report 应是合法 JSON 字符串"""
         mock_report = make_valid_report()
-        with patch("src.stages.reporter._create_report_chain") as mock_factory:
+        with patch("src.specialists.report.stages.reporter._create_report_chain") as mock_factory:
             mock_factory.return_value = make_mock_chain(mock_report)
             state = make_base_state(
                 selected_plan={"investment_thesis": "test thesis for report generation"}
@@ -265,7 +265,7 @@ class TestReportGeneration:
 
     def test_llm_exception_returns_error(self) -> None:
         """LLM 异常时应返回 error"""
-        with patch("src.stages.reporter._create_report_chain") as mock_factory:
+        with patch("src.specialists.report.stages.reporter._create_report_chain") as mock_factory:
             mock_factory.return_value = MagicMock(
                 invoke=MagicMock(side_effect=Exception("LLM error"))
             )
@@ -306,7 +306,7 @@ class TestValidator:
 
     def test_max_retries_forces_completion(self) -> None:
         """达到最大重试次数后应强制完成，不再循环"""
-        from src.state import MAX_VALIDATOR_RETRIES
+        from src.specialists.report.state import MAX_VALIDATOR_RETRIES
         bad_report = {"research_topic": "test"}
         state = make_base_state(
             final_report=json.dumps(bad_report),

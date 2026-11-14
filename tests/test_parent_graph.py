@@ -1,7 +1,7 @@
 """Full parent graph, using existing nodes and mocked external services."""
 from unittest.mock import Mock, patch
 
-from src.parent_graph import create_parent_graph
+from src.orchestration.parent_graph import create_parent_graph
 
 
 def task(ident="m", category="market_data", deps=None):
@@ -25,8 +25,8 @@ def execute(payload, inputs=None):
     planning.invoke.return_value = payload
     composing.invoke.return_value = {"answer": "查询到价格100元。"}
     graph = create_parent_graph(market_data_graph=md, report_graph=report)
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.composer._create_chain", return_value=composing):
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.orchestration.composer._create_chain", return_value=composing):
         result = graph.invoke(inputs or {"user_query": "查茅台价格"})
     return result, md, report, planning, composing
 
@@ -89,8 +89,8 @@ def test_report_state_stays_in_task_payload_and_is_not_composed(valid_report):
     report.invoke.return_value = {"current_phase": "completed", "error": None,
         "final_report": json.dumps(valid_report), "perception_data": {"detail": "kept"}}
     planning = Mock(); planning.invoke.return_value = plan(task("r", "report"))
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.composer._create_chain") as composing:
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.orchestration.composer._create_chain") as composing:
         result = create_parent_graph(market_data_graph=market(), report_graph=report).invoke({
             "user_query": "生成新能源报告", "report_parameters": {"r": {"industry_focus": "光伏"}}})
     assert result["task_results"]["r"]["result"]["perception_data"] == {"detail": "kept"}
@@ -103,8 +103,8 @@ def test_stream_exposes_task_progress_and_composition():
     planning = Mock(); planning.invoke.return_value = plan()
     composing = Mock(); composing.invoke.return_value = {"answer": "100元"}
     graph = create_parent_graph(market_data_graph=md, report_graph=Mock())
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.composer._create_chain", return_value=composing):
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.orchestration.composer._create_chain", return_value=composing):
         events = list(graph.stream({"user_query": "茅台价格"}, subgraphs=True))
     assert any(not namespace and "planner" in update for namespace, update in events)
     assert any(namespace and "supervisor" in update for namespace, update in events)
@@ -115,8 +115,8 @@ def test_reused_parent_graph_does_not_keep_previous_request():
     planning = Mock(); planning.invoke.side_effect = [plan(task("old")), plan(task("new"))]
     composing = Mock(); composing.invoke.return_value = {"answer": "100元"}
     graph = create_parent_graph(market_data_graph=market(), report_graph=Mock())
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.composer._create_chain", return_value=composing):
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.orchestration.composer._create_chain", return_value=composing):
         first = graph.invoke({"user_query": "第一问"})
         second = graph.invoke({"user_query": "第二问"})
     assert set(first["task_results"]) == {"old"}
@@ -124,13 +124,13 @@ def test_reused_parent_graph_does_not_keep_previous_request():
 
 
 def test_dataset_store_is_per_request_not_state_or_global():
-    from src.datasets import DatasetStore
+    from src.core.datasets import DatasetStore
     md = market()
     planning = Mock(); planning.invoke.return_value = plan()
     composing = Mock(); composing.invoke.return_value = {"answer": "100元"}
     graph = create_parent_graph(market_data_graph=md, report_graph=Mock())
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.composer._create_chain", return_value=composing):
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.orchestration.composer._create_chain", return_value=composing):
         a = graph.invoke({"user_query": "第一次"})
         b = graph.invoke({"user_query": "第二次"})
     stores = [call.kwargs["config"]["configurable"]["dataset_store"] for call in md.invoke.call_args_list]
@@ -144,7 +144,7 @@ def test_report_intent_repair_dispatches_report_without_executing_rejected_data_
     md, report=market(),Mock()
     report.invoke.return_value={'current_phase':'completed','error':None,'final_report':json.dumps(valid_report)}
     planning=Mock();planning.invoke.side_effect=[plan(task()),plan(task('r','report'))]
-    with patch('src.stages.planner._create_chain',return_value=planning):
+    with patch('src.orchestration.planner._create_chain',return_value=planning):
         result=create_parent_graph(market_data_graph=md,report_graph=report).invoke(
             {'user_query':'请生成新能源行业未来一年的投研报告，重点关注光伏。'})
     assert result['planning_attempts']==2

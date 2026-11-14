@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from src.datasets import DatasetStore, PriceDataset, ValuationDataset
+from src.core.datasets import DatasetStore, PriceDataset, ValuationDataset
 
 
 def prices(**updates):
@@ -97,7 +97,7 @@ def test_rejects_valuation_lookahead_units_and_unexplained_missing(updates):
 
 
 def test_json_reference_roundtrip_and_unadjusted_benchmark():
-    from src.datasets import DatasetRef
+    from src.core.datasets import DatasetRef
     store = DatasetStore()
     ref = store.put(prices(symbol="000300", asset_type="index", adjustment="none", volume_unit="not_available"))
     assert DatasetRef.model_validate_json(ref.model_dump_json()) == ref

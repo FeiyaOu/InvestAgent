@@ -3,11 +3,11 @@ import json
 from datetime import date, datetime, timezone
 from unittest.mock import Mock, patch
 
-from src.analytics_artifacts import AnalysisStore
-from src.analytics_tools import analyze_price_performance
-from src.datasets import DatasetStore, PriceDataset
-from src.supervisor import create_supervisor_graph
-from src.parent_graph import create_parent_graph
+from src.specialists.analytics.artifacts import AnalysisStore
+from src.specialists.analytics.tools import analyze_price_performance
+from src.core.datasets import DatasetStore, PriceDataset
+from src.orchestration.supervisor import create_supervisor_graph
+from src.orchestration.parent_graph import create_parent_graph
 
 
 def task(ident, category, deps=None):
@@ -95,7 +95,7 @@ def test_failed_analytics_blocks_downstream_and_strategy_requires_runtime_store(
 
 
 def test_no_data_uses_real_agent_missing_data_path_without_llm():
-    with patch("src.stages.analytics.create_llm") as llm:
+    with patch("src.specialists.analytics.nodes.create_llm") as llm:
         state = create_supervisor_graph().invoke({"plan": plan(task("a", "analytics"))})
     record = state["task_results"]["a"]
     assert record["status"] == "partial"
@@ -110,7 +110,7 @@ def test_parent_creates_both_stores_per_request_and_keeps_them_out_of_state():
     chain = Mock(); chain.invoke.return_value = plan(task("m", "market_data"))
     composing = Mock(); composing.invoke.return_value = {"answer": "行情"}
     graph = create_parent_graph(market_data_graph=md)
-    with patch("src.stages.planner._create_chain", return_value=chain), patch("src.stages.composer._create_chain", return_value=composing):
+    with patch("src.orchestration.planner._create_chain", return_value=chain), patch("src.orchestration.composer._create_chain", return_value=composing):
         outputs = [graph.invoke({"user_query": "查询"}) for _ in range(2)]
     configs = [call.kwargs["config"]["configurable"] for call in md.invoke.call_args_list]
     assert configs[0]["dataset_store"] is not configs[1]["dataset_store"]
@@ -144,8 +144,8 @@ def test_real_analytics_executes_with_market_produced_data_in_parent_graph():
             "args": {"dataset_id": inputs["dataset_refs"][0]["dataset_id"]}}])
     llm.invoke.side_effect = respond
     composing = Mock(); composing.invoke.return_value = {"answer": "任务执行完成"}
-    with patch("src.stages.planner._create_chain", return_value=planning), patch(
-            "src.stages.analytics.create_llm", return_value=llm), patch("src.stages.composer._create_chain", return_value=composing):
+    with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
+            "src.specialists.analytics.nodes.create_llm", return_value=llm), patch("src.orchestration.composer._create_chain", return_value=composing):
         state = create_parent_graph(market_data_graph=md).invoke({"user_query": "分析茅台历史表现"})
     assert state["task_results"]["a"]["status"] == "completed"
     metric = state["task_results"]["a"]["result"]["findings"][0]["metrics"]["period_return"]

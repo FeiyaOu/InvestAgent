@@ -172,8 +172,8 @@ initialize → agent → tools → agent
                       └─ 输出校验失败且可重试 → agent
 ```
 
-`src/market_data_agent.py` 仅负责编排，模型调用位于 `src/stages/market_data.py`；
-独立状态和 Pydantic 契约位于 `src/market_data_state.py`。
+`src/specialists/market_data/agent.py` 仅负责编排，模型调用位于 `src/specialists/market_data/nodes.py`；
+独立状态和 Pydantic 契约位于 `src/specialists/market_data/state.py`。
 
 ### 8.2 接口与状态
 
@@ -220,7 +220,7 @@ state = graph.invoke({"task": "查询茅台最新可用股价", "subject": "茅�
 
 ## 9. 报告子图封装完成（2026-11-10）
 
-- 新增 `src/report_graph.py`，`create_report_graph()` 编译现有六节点报告链，
+- 新增 `src/specialists/report/graph.py`，`create_report_graph()` 编译现有六节点报告链，
   不配置私有 checkpointer，可独立调用，也可继承父图 checkpoint。
 - 六个节点函数原样复用；节点内部实现、prompt、工具调用、输出字段及实际校验重试行为均未修改。
 - `route_after_validator` 移至报告编排模块，并从 `src.agent` 继续导出，兼容已有调用。
@@ -333,12 +333,12 @@ UI 后续展示任务列表、类别、依赖及执行状态，并及时展示�
 
 ### 11.1 代码与调用
 
-- `src/planner_schemas.py`：PlanTask、TaskPlan、PlannerState。
-- `src/stages/planner.py`：`planner(state, max_retries=1)`，可直接调用或注册为 LangGraph 节点。
+- `src/orchestration/planner_schemas.py`：PlanTask、TaskPlan、PlannerState。
+- `src/orchestration/planner.py`：`planner(state, max_retries=1)`，可直接调用或注册为 LangGraph 节点。
 - 不执行工具、专家或报告子图，不改变 `src/agent.py` 和 Streamlit 的当前行为。
 
 ```python
-from src.stages.planner import planner
+from src.orchestration.planner import planner
 
 update = planner({
     "user_query": "茅台和五粮液现在什么价格？比较估值并分析未来一年投资机会。",
@@ -381,12 +381,12 @@ Prompt 要求保留主体与时间范围、利用上下文解析指代、仅明�
 
 ### 12.1 入口与范围
 
-`src/supervisor.py` 提供 `create_supervisor_graph()`，状态定义位于 `src/supervisor_state.py`。
+`src/orchestration/supervisor.py` 提供 `create_supervisor_graph()`，状态定义位于 `src/orchestration/supervisor_state.py`。
 它是确定性顺序调度子图，不新增 LLM 调用，不自动重新规划，不包含 Planner / Composer。
 已接入独立 market_data 与 report 子图；不修改报告内部代码和旧入口 / UI。
 
 ```python
-from src.stages.planner import planner
+from src.orchestration.planner import planner
 from src.supervisor import create_supervisor_graph
 
 planning = planner({"user_query": "查询茅台价格"})
@@ -445,16 +445,16 @@ mock 测试覆盖分类调度、依赖顺序、证据传递、状态隔离、未
 
 ## 13. Composer 与 Supervisor 接线（2026-11-10 已实现，未切换入口）
 
-- 新增 `src/stages/composer.py`，`composer(state)` 汇总终止任务；
-  `src/composer_state.py` 定义 ResponseState 与非空回答的 Pydantic 模型。
-- 新增 `src/response_graph.py` 的 `create_response_graph()`：
+- 新增 `src/orchestration/composer.py`，`composer(state)` 汇总终止任务；
+  `src/orchestration/composer_state.py` 定义 ResponseState 与非空回答的 Pydantic 模型。
+- 新增 `src/orchestration/response_graph.py` 的 `create_response_graph()`：
   START → execution（现有 Supervisor 子图）→ composer → END。
 - 输入 user_query、已验证的 plan、可选 report_parameters；
   返回原任务结果、supervisor_status，以及 final_response、composition_status、composition_error。
 - 不自动调用 Planner；暂不切换 `src/agent.py`、不移除旧 Reactive、不改 Streamlit。
 
 ```python
-from src.stages.planner import planner
+from src.orchestration.planner import planner
 from src.response_graph import create_response_graph
 
 query = "查询茅台最新价格"
@@ -496,7 +496,7 @@ mock 测试覆盖部分成功、未接入能力、数据缺失与模拟标识、
 
 ### 14.1 父级状态与初始化
 
-`src/parent_state.py` 定义独立 ParentState、Pydantic ParentRequest 与 create_parent_state()。
+`src/orchestration/parent_state.py` 定义独立 ParentState、Pydantic ParentRequest 与 create_parent_state()。
 父级只包含 user_query、conversation_context、report_parameters，以及 planning、supervisor、
 composition 各阶段状态、错误、plan、task_results 和 final_response。
 plan / final_response 和各阶段状态在新请求时初始化为 None；次数为0，结果字典为空。
@@ -511,7 +511,7 @@ create_parent_state() 每次新建并复制输入，不复用上一请求的计�
 
 ### 14.2 统一任务结果边界
 
-`src/task_contracts.py` 定义 TaskResult（继承 PlanTask）和 TaskError。
+`src/orchestration/task_contracts.py` 定义 TaskResult（继承 PlanTask）和 TaskError。
 统一信封字段为 task_id、category、question、depends_on、status、result、error。
 
 - status 仅允许 completed / partial / failed / blocked / unsupported，记录只保存终止结果。
@@ -544,7 +544,7 @@ Composer 无效边界处理，以及手动顺序复用 Planner → Supervisor �
 
 ### 15.1 独立入口
 
-`src/parent_graph.py` 提供 `create_parent_graph()`，使用 ParentState：
+`src/orchestration/parent_graph.py` 提供 `create_parent_graph()`，使用 ParentState：
 
 ```text
 START → initialize → planner → supervisor → composer → END
@@ -602,7 +602,7 @@ graph.stream(..., subgraphs=True) 可观察规划、内部执行、逐任务结�
 run_invest_agent(user_query, *, conversation_context="", report_parameters=None, config=None)
 返回 ParentState。不再接受 thread_id 或全局报告主题/行业/时间参数。
 旧 assess_query、reactive_agent、should_continue_tools、extract_reactive_response、
-route_after_assess 和 MemorySaver 编排已删除。报告 validator 路由仍位于 report_graph.py。
+route_after_assess 和 MemorySaver 编排已删除。报告 validator 路由仍位于 report_graph.py（现 src/specialists/report/graph.py）。
 报告子图内部节点函数、提示、调用与校验行为未改。
 
 ### 16.2 会话与返回结构迁移

@@ -16,15 +16,26 @@
 |---|---|
 | `spec/invest_spec.md` | 规格文档（一等公民）— C1–C9 约束权威来源 |
 | `spec/project-architecture.md` | 架构决策文档 — 所有技术选型的依据 |
-| `src/agent.py` | 公共门面（调用 parent_graph.py，无旧 Reactive 路径）|
-| `src/parent_graph.py` | 父图接线，ParentState 与 TaskResult 见同目录对应文件 |
 | `spec/strategy-agent-development.md` | Strategy/Risk实施步骤与验收记录 |
 | `spec/analytics-agent.md` / `spec/report-delivery.md` | Analytics 实施规格 / 报告阅读与下载 |
 | `spec/workflow-evolution.md` | 工作流演进与历次决策记录（进展常比主规格更新）|
-| `src/schemas.py` | 原报告 Pydantic 模型|
-| `src/tools.py` | AKShare 工具函数（`@tool` 装饰器，含 fallback）|
-| `src/stages/reporter.py` | `validate_report()`（唯一报告校验入口）|
-| `src/stages/validator.py` | 校验节点（触发有向环②的地方）|
+| `src/agent.py` | 公共门面（调用 orchestration/parent_graph.py）|
+| `src/orchestration/parent_graph.py` | 父图接线；planner / supervisor / composer / task_contracts 同目录 |
+| `src/data/tools.py` | AKShare 工具函数（`@tool` 装饰器，含 fallback）|
+| `src/specialists/report/stages/reporter.py` | `validate_report()`（唯一报告校验入口）|
+| `src/specialists/report/stages/validator.py` | 校验节点（触发有向环②的地方）|
+
+## src 结构
+
+```text
+src/agent.py         公共门面
+src/core/            llm、datasets、errors、validation_diagnostics（无业务依赖）
+src/data/            AKShare 工具（tools.py）
+src/orchestration/   父图、planner、supervisor、composer、任务契约
+src/specialists/     market_data / analytics / strategy（agent·state·nodes·tools·artifacts·handoff）
+                     report（graph·state·schemas·stages/ 六节点）
+src/evaluation/      LangFuse / OpenEvals（可选）
+```
 
 ## 开发约定
 
@@ -46,7 +57,7 @@ python linters/check_agent_structure.py       # 结构 lint 检查
 
 ## 架构约束
 
-- 依赖方向：`tools ← stages/* ← agent.py`
-- AKShare 只在 `src/tools.py` 中调用，stage 模块不直接调用 AKShare
-- LLM 调用只在 `src/stages/` 中发生，`agent.py` 只负责编排
+- 依赖方向：`core / data ← specialists ← orchestration ← agent.py`；specialists 不 import orchestration
+- AKShare 只在 `src/data/tools.py` 中调用，节点模块不直接调用 AKShare
+- LLM 调用只在节点模块中发生：`orchestration/planner.py`、`composer.py`、`specialists/*/nodes.py`、`specialists/report/stages/`；`agent.py` 只负责编排
 - 禁止反向依赖（`validator` 不能 import `perception`）

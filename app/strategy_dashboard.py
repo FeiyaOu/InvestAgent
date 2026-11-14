@@ -1,6 +1,6 @@
 """Strategy V1 display over validated task payloads, without reexecution."""
 import streamlit as st
-from src.strategy_state import StrategyResult
+from src.specialists.strategy.state import StrategyResult
 
 
 def render_strategy_task(task_id, record):

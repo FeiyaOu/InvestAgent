@@ -7,10 +7,10 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from src.analytics_artifacts import AnalysisStore
-from src.analytics_tools import compute_factors, compare_valuations
-from src.datasets import DatasetStore, PriceDataset, ValuationDataset
-from src.tools import get_valuation_snapshot
+from src.specialists.analytics.artifacts import AnalysisStore
+from src.specialists.analytics.tools import compute_factors, compare_valuations
+from src.core.datasets import DatasetStore, PriceDataset, ValuationDataset
+from src.data.tools import get_valuation_snapshot
 
 
 def context():

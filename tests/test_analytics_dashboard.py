@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.analytics_artifacts import AnalysisArtifact
+from src.specialists.analytics.artifacts import AnalysisArtifact
 from app.analytics_dashboard import build_analysis_figures, resolve_artifact, format_metric
 
 
