@@ -8,12 +8,17 @@ from src.specialists.strategy.nodes import (
     make_tools_node,
 )
 from src.specialists.strategy.state import StrategyState
-from src.specialists.strategy.tools import evaluate_risk_constraints, stress_test_portfolio
+from src.specialists.strategy.tools import (
+    assess_portfolio_risk,
+    evaluate_risk_constraints,
+    replay_historical_scenario,
+    stress_test_portfolio,
+)
 
-STRATEGY_TOOLS=[evaluate_risk_constraints,stress_test_portfolio]
+STRATEGY_TOOLS=[evaluate_risk_constraints,stress_test_portfolio,assess_portfolio_risk,replay_historical_scenario]
 
 
-def create_strategy_agent(*,max_tool_rounds=3,max_tool_calls=12,max_output_retries=1):
+def create_strategy_agent(*,max_tool_rounds=3,max_tool_calls=16,max_output_retries=1):
     for value,upper in ((max_tool_rounds,5),(max_tool_calls,20),(max_output_retries,2)):
         if isinstance(value,bool) or not isinstance(value,int) or not 0<=value<=upper:
             raise ValueError('策略预算超出范围')

@@ -111,12 +111,19 @@ def build_result(answer, req, artifacts, scope_id, config):
             if not set(claim.evidence_ids) <= allowed:
                 raise StrategyReferenceError(f'{group}.{index}.evidence_ids', '结论evidence_ids必须逐字复制当前引用清单中的ID，不要填写股票代码、工具名或自造ID。')
     checks = [row for ref in refs for row in ref['constraint_checks']]
+    risks = [row for ref in refs for row in ref['risk_results']]
     scenarios = [row for ref in refs for row in ref['scenario_results']]
     missing = list(answer.missing_information)
     requests = [r.model_dump() for r in answer.missing_data_requests]
     if req.scenario_assumptions and req.portfolio is None:
         missing.append('压力测试缺少持仓、现金权重、币种和持仓日期')
         requests.append({'kind':'portfolio','subjects':req.subjects,'time_range':req.time_range,'reason':missing[-1]})
+    if req.historical_scenarios and req.portfolio is None:
+        missing.append('历史情景重演缺少持仓、现金权重和持仓日期')
+        requests.append({'kind':'portfolio','subjects':req.subjects,'time_range':req.time_range,'reason':missing[-1]})
+    for row in scenarios:
+        if row.get('origin') == 'historical_replay' and row.get('portfolio_return') is None:
+            missing.append(f"{row['scenario_id']} 情景有持仓未覆盖，未计算组合收益")
     if any(row['status']=='unknown' for row in checks):
         missing.append('部分风险约束无法检查，详见检查结果')
     if not (req.dataset_refs or req.analysis_refs or any(usable_evidence(e) for e in req.evidence) or req.portfolio or refs):
@@ -128,11 +135,12 @@ def build_result(answer, req, artifacts, scope_id, config):
     if mock:
         limits.append('包含模拟数据，不作为真实市场事实。')
     result = StrategyResult(summary=answer.summary, opportunities=answer.opportunities, risks=answer.risks,
-        artifact_refs=refs, scenario_results=scenarios, constraint_checks=checks,
+        artifact_refs=refs, scenario_results=scenarios, constraint_checks=checks, risk_results=risks,
         dataset_refs=req.dataset_refs, analysis_refs=req.analysis_refs, evidence=req.evidence,
         assumptions={'portfolio':req.portfolio.model_dump(mode='json') if req.portfolio else None,
             'risk_constraints':req.risk_constraints.model_dump(exclude_none=True),
-            'scenario_assumptions':[s.model_dump(mode='json') for s in req.scenario_assumptions]},
+            'scenario_assumptions':[s.model_dump(mode='json') for s in req.scenario_assumptions],
+            'historical_scenarios':list(req.historical_scenarios)},
         limitations=list(dict.fromkeys(limits)), missing_information=list(dict.fromkeys(missing)), missing_data_requests=requests)
     return ('partial' if missing or requests or mock else 'completed'), result.model_dump(mode='json')
 

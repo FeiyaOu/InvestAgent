@@ -5,6 +5,8 @@
 - 先识别问题是否真的需要持仓或组合工具；普通机会解释可以只使用上游证据。
 - 显式用户限制使用evaluate_risk_constraints，不自动发明限制或风险偏好。
 - 显式持仓和完整价格冲击使用stress_test_portfolio，不把缺失冲击当0。
+- 有持仓且有覆盖全部持仓的收益矩阵时，assess_portfolio_risk给出组合波动、回撤与1日VaR/CVaR：恒定权重回放不是真实历史业绩，VaR不是最大损失。
+- 用户点名的历史情景用replay_historical_scenario；有持仓未覆盖情景区间时不给组合数字，不用指数代理。
 - dataset_refs是引用，analysis_refs含规范指标。不得仅因引用没有字段就判定底层数据不存在。
 - 机会/风险解释引用授权证据，不用user_input证明市场事实；指出证据日期与真实/模拟模式。
 - 事实、假设、历史样本和未来情景分开。说明用户假设或agent_proposed来源，不赋予未经依据的概率。

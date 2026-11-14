@@ -15,6 +15,7 @@ class StrictModel(BaseModel):
 
 class Position(StrictModel):
     symbol: str = Field(pattern=r'^[036][0-9]{5}$')
+    name: str | None = None  # User-stated company name; lets the planner check the code.
     weight: float = Field(ge=0, le=1)
 
 
@@ -58,12 +59,16 @@ class PriceScenario(StrictModel):
         return self
 
 
+HistoricalScenarioKey = Literal['2008_gfc', '2015_crash', '2020_covid']
+
+
 class StrategyParameters(StrictModel):
     subjects: list[str] = Field(default_factory=list)
     time_range: str = ''
     portfolio: Portfolio | None = None
     risk_constraints: RiskConstraints = Field(default_factory=RiskConstraints)
     scenario_assumptions: list[PriceScenario] = Field(default_factory=list, max_length=10)
+    historical_scenarios: list[HistoricalScenarioKey] = Field(default_factory=list, max_length=3)
 
     @field_validator('risk_constraints', mode='before')
     @classmethod
@@ -75,10 +80,15 @@ class StrategyParameters(StrictModel):
     def default_scenarios(cls, value):
         return [] if value is None else value
 
+    @field_validator('historical_scenarios', mode='before')
+    @classmethod
+    def default_historical(cls, value):
+        return [] if value is None else value
+
     @model_validator(mode='after')
     def unique_scenarios(self):
         ids = [s.scenario_id for s in self.scenario_assumptions]
-        if len(ids) != len(set(ids)):
+        if len(ids) != len(set(ids)) or len(self.historical_scenarios) != len(set(self.historical_scenarios)):
             raise ValueError('情景ID重复')
         return self
 
@@ -118,6 +128,7 @@ class StrategyResult(StrictModel):
     artifact_refs: list[dict] = Field(default_factory=list)
     scenario_results: list[dict] = Field(default_factory=list)
     constraint_checks: list[dict] = Field(default_factory=list)
+    risk_results: list[dict] = Field(default_factory=list)
     dataset_refs: list[dict] = Field(default_factory=list)
     analysis_refs: list[dict] = Field(default_factory=list)
     evidence: list[dict] = Field(default_factory=list)
@@ -134,6 +145,7 @@ class StrategyState(TypedDict, total=False):
     portfolio: dict | None
     risk_constraints: dict
     scenario_assumptions: list[dict]
+    historical_scenarios: list[str]
     dataset_refs: list[dict]
     analysis_refs: list[dict]
     evidence: list[dict]

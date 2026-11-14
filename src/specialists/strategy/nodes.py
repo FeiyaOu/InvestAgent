@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from src.core.llm import FAST_MODEL, create_llm
 from src.core.validation_diagnostics import validation_diagnostics
+from src.specialists.strategy import portfolio_risk
 from src.specialists.strategy.artifacts import StrategyStore
 from src.specialists.strategy.handoff import (
     StrategyReferenceError,
@@ -29,6 +30,11 @@ def emit_diagnostic(kind, message, diagnostics=None):
         return
     writer({'event':'strategy_diagnostic','stage':'strategy','error_type':kind,
             'message':message,'diagnostics':diagnostics or []})
+
+
+# Only identifiers selected by code; holdings, limits and data are injected at runtime.
+_TOOL_ARGS={'stress_test_portfolio':{'scenario_id'},'assess_portfolio_risk':{'return_matrix_analysis_id'},
+    'replay_historical_scenario':{'scenario_key'}}
 
 
 def failure(kind,message):
@@ -74,7 +80,7 @@ user_input只能支持用户持仓/限制/假设，不得用它作为市场事�
 仅凭PE/PB差异不能确认成长性、资产重估或市场定价原因，缺少对应基本面证据时标为待验证假设。
 历史风险不是预测；低PE不代表买入机会。年化频率只用于波动率等年化指标，最大回撤不依赖252日年化假设。
 非总回报序列不自动意味着回报被低估，不自行推断偏差方向。V1不支持优化、估值预测或相关性冲击；缺少EPS等前提须说明。
-V1工具由编排按显式用户约束和完整持仓情景执行，你当前仅生成解释JSON，不调用任何工具。
+工具由编排按显式用户约束、完整持仓情景和可用收益矩阵执行（含组合VaR/CVaR），你当前仅生成解释JSON，不调用任何工具。\nVaR是历史或正态假设下的分位损失，不是最大可能损失；组合回放不是真实历史业绩。
 没有用户限制不需要约束检查；没有持仓不需要压力测试。不得请求预测/优化等未实现工具。
 artifact_ids不属于模型输出，不要输出该字段：它不能用来填写上游analysis_引用。
 机会/风险的evidence_ids可引用analysis_id、dataset_id、有效tool_call_id或已执行strategy_产物。
@@ -104,6 +110,13 @@ def make_agent_node(tools,max_tool_rounds,max_tool_calls):
                 if state['portfolio']:
                     calls += [{'name':'stress_test_portfolio','args':{'scenario_id':s['scenario_id']},'id':'stress_'+uuid4().hex}
                               for s in state['scenario_assumptions']]
+                    analyses=(config.get('configurable') or {}).get('analysis_store')
+                    matrix,_=portfolio_risk.compatible_matrix(request_from_state(state),analyses) if analyses else (None,None)
+                    if matrix:
+                        calls.append({'name':'assess_portfolio_risk','args':{'return_matrix_analysis_id':matrix['analysis_id']},
+                                      'id':'risk_'+uuid4().hex})
+                    calls += [{'name':'replay_historical_scenario','args':{'scenario_key':key},'id':'replay_'+uuid4().hex}
+                              for key in state.get('historical_scenarios',[])]
             if calls:
                 response=AIMessage(content='',tool_calls=calls)
             else:
@@ -114,7 +127,7 @@ def make_agent_node(tools,max_tool_rounds,max_tool_calls):
                 manifest=reference_manifest(req,state['strategy_artifacts'])
                 guidance=HumanMessage(content='输出引用清单与规则：\n'+json.dumps({
                     'available_references':manifest,
-                    'artifacts':[{k:r[k] for k in ('artifact_id','tool_name','constraint_checks','scenario_results','limitations')}
+                    'artifacts':[{k:r[k] for k in ('artifact_id','tool_name','constraint_checks','scenario_results','risk_results','limitations')}
                                  for r in state['strategy_artifacts']]},ensure_ascii=False))
                 response=llm.invoke([*state['messages'],guidance])
                 if not isinstance(response,AIMessage):
@@ -143,10 +156,10 @@ def make_agent_node(tools,max_tool_rounds,max_tool_calls):
                 if c['name'] not in {t.name for t in tools}:
                     return failure('tool_scope_error','策略工具不在允许清单。')
                 args=c['args']
-                expected={'scenario_id'} if c['name']=='stress_test_portfolio' else set()
+                expected=_TOOL_ARGS.get(c['name'],set())
                 if set(args)!=expected:
                     return failure('tool_scope_error','不得由模型改写持仓、约束或运行时数据。')
-                if (c['name'],args.get('scenario_id')) in done:
+                if (c['name'],args.get('scenario_id',args.get('scenario_key'))) in done:
                     return recover_or_fail(state,config,'duplicate_tool_call','相同策略产物已计算，禁止重复调用。')
             return {'messages':[response.model_copy(update={'id':uuid4().hex})]}
         except Exception:
