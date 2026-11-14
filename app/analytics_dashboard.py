@@ -10,7 +10,8 @@ from src.specialists.analytics.artifacts import AnalysisArtifact
 _LABELS = {"period_return": "区间收益", "annualized_volatility": "年化波动率", "max_drawdown": "最大回撤",
     "asset_period_return": "标的收益", "benchmark_period_return": "基准收益", "excess_period_return": "超额区间收益",
     "beta": "Beta", "correlation": "相关系数", "tracking_error": "年化跟踪误差",
-    "momentum": "动量", "sma_gap": "均线偏离", "realized_volatility": "滚动年化波动率", "volume_ratio": "量比"}
+    "momentum": "动量", "sma_gap": "均线偏离", "realized_volatility": "滚动年化波动率", "volume_ratio": "量比",
+    "rsi": "RSI", "macd_hist_pct": "MACD柱/收盘价", "bollinger_pct_b": "布林带位置 %B", "turnover": "平均换手率"}
 _SERIES = {"cumulative_return": "累计价格收益", "drawdown": "历史回撤",
            "asset_cumulative_return": "标的", "benchmark_cumulative_return": "基准"}
 
@@ -46,9 +47,37 @@ def _layout(figure, title, unit="fraction"):
     return figure
 
 
+def build_peer_tables(table):
+    """{dimension: rows} with one column per factor; cells show in-sample position only."""
+    grouped = {}
+    for row in table:
+        rows = grouped.setdefault(row["dimension"], {})
+        cell = "不可比" if row.get("excluded_reason") else "不可用" if row.get("percentile") is None else (
+            f"z={row['z_score']:.2f} · {row['percentile']:.0%}" if row.get("z_score") is not None
+            else f"z=不可用 · {row['percentile']:.0%}")
+        label = " ".join(filter(None, (row["symbol"], row.get("security_name"))))
+        rows.setdefault(row["symbol"], {"标的": label})[row["factor"]] = cell
+    return {dimension: list(rows.values()) for dimension, rows in grouped.items()}
+
+
+def _correlation_figure(table):
+    symbols = list(dict.fromkeys([row["symbol_a"] for row in table] + [row["symbol_b"] for row in table]))
+    index = {symbol: i for i, symbol in enumerate(symbols)}
+    z = [[None] * len(symbols) for _ in symbols]
+    for row in table:
+        i, j = index[row["symbol_a"]], index[row["symbol_b"]]
+        z[i][j] = z[j][i] = row.get("correlation")
+    figure = go.Figure(go.Heatmap(x=symbols, y=symbols, z=z, zmin=-1, zmax=1, colorscale="RdBu", reversescale=True))
+    figure.update_layout(title="收益相关系数（历史样本）", template="plotly_white", height=360,
+                         margin=dict(l=20, r=20, t=50, b=20))
+    return figure
+
+
 def build_analysis_figures(artifact: AnalysisArtifact):
     """Plot numeric series without inferring values from LLM prose."""
     figures, consumed = [], set()
+    if artifact.tool_name == "build_return_matrix" and artifact.table:
+        return [("correlation", _correlation_figure(artifact.table))]
     benchmark_keys = ("asset_cumulative_return", "benchmark_cumulative_return")
     if any(artifact.series.get(key) for key in benchmark_keys):
         figure = go.Figure()
@@ -117,7 +146,12 @@ def render_analytics_task(task_id, record, snapshots, render_id="final"):
             batch = entries[start:start+4]
             for column, (name, value) in zip(st.columns(len(batch)), batch):
                 column.metric(_LABELS.get(name, name), format_metric(value, summary.get("metric_units", {}).get(name)))
-        if summary.get("table"):
+        if summary.get("table") and summary.get("tool_name") == "rank_peers":
+            st.caption("样本内相对位置（z-score · 百分位），不是评分或推荐；高低不代表好坏。")
+            for dimension, rows in build_peer_tables(summary["table"]).items():
+                st.markdown({"technical": "技术面", "valuation": "估值"}.get(dimension, dimension))
+                st.dataframe(rows, hide_index=True, width="stretch")
+        elif summary.get("table"):
             st.dataframe(summary["table"], hide_index=True, width="stretch")
         if artifact is not None:
             for kind, figure in build_analysis_figures(artifact):

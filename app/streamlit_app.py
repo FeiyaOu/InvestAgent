@@ -44,9 +44,11 @@ st.markdown("""
 # Invalidate session objects from the old dual-path UI on hot reload.
 if st.session_state.get("ui_version") != 2:
     st.session_state.update(ui_version=2, conversation_history=[], last_result=None,
-                            execution_events=[], report_progress={}, debug_events=[], analysis_snapshots={}, turn_count=0)
+                            execution_events=[], report_progress={}, debug_events=[], analysis_snapshots={},
+                            strategy_series={}, turn_count=0)
 for key, default in {"conversation_history": [], "last_result": None, "execution_events": [],
-                     "report_progress": {}, "debug_events": [], "analysis_snapshots": {}, "turn_count": 0, "query_input": ""}.items():
+                     "report_progress": {}, "debug_events": [], "analysis_snapshots": {}, "strategy_series": {},
+                     "turn_count": 0, "query_input": ""}.items():
     if key not in st.session_state:
         st.session_state[key] = default
 if "use_real_data" not in st.session_state:
@@ -165,9 +167,11 @@ def _render_debug(state, debug):
         _render_experts(state, debug)
 
 
-def _render_results(state, progress, snapshots=None, render_id="final"):
+def _render_results(state, progress, snapshots=None, render_id="final", strategy_series=None):
     if snapshots is None:
         snapshots = st.session_state.get("analysis_snapshots", {})
+    if strategy_series is None:
+        strategy_series = st.session_state.get("strategy_series", {})
     records = state.get("task_results", {})
     with answer_tab:
         if state.get("final_response"):
@@ -207,12 +211,12 @@ def _render_results(state, progress, snapshots=None, render_id="final"):
         if not found:
             st.info("尚无数据证据。")
     with analysis_tab:
-        st.caption("分析图表来自已验证计算产物；仅在当前会话保留最近请求。Strategy/Risk V1 已接入。")
+        st.caption("分析与风险图表来自已验证计算产物；仅在当前会话保留最近请求。")
         for ident, record in records.items():
             if record["category"] == "analytics":
                 render_analytics_task(ident, record, snapshots, render_id=render_id)
             if record["category"] == "investment_strategy":
-                render_strategy_task(ident, record)
+                render_strategy_task(ident, record, strategy_series.get(ident, {}), render_id=render_id)
     with report_tab:
         st.caption("四节点完整输出保持可见；成品报告请到「报告中心」查看和下载。")
         reports = dict(progress)
@@ -244,7 +248,8 @@ with st.sidebar:
     st.caption("摘要只在当前 Streamlit 会话内保留，刷新或服务重启后可能丢失。")
     if st.button("🔄 新对话", width="stretch"):
         st.session_state.update(conversation_history=[], last_result=None, execution_events=[],
-                                report_progress={}, debug_events=[], analysis_snapshots={}, turn_count=0)
+                                report_progress={}, debug_events=[], analysis_snapshots={}, strategy_series={},
+                                turn_count=0)
         st.rerun()
     st.caption(f"已完成 {st.session_state['turn_count']} 轮")
 
@@ -296,7 +301,7 @@ if run_btn and user_query.strip():
     initial = create_parent_state(user_query, conversation_context=summary)
     current, progress, events = dict(initial), {}, []
     debug = []
-    snapshots = {}
+    snapshots, strategy_series = {}, {}
     render_seq = 0
     active_task = None
     active_category = None
@@ -327,6 +332,8 @@ if run_btn and user_query.strip():
                     _render_debug(current, debug)
                 if update.get("event") == "analysis_artifacts":
                     snapshots.setdefault(update["task_id"], {}).update(update["artifacts"])
+                if update.get("event") == "strategy_artifacts":
+                    strategy_series.setdefault(update["task_id"], {}).update(update["series"])
                 if update.get("event") == "task_started":
                     active_task, active_category = update["task_id"], update["category"]
                     debug.append({"step": len(debug) + 1, "node": "task_started", "task_id": active_task,
@@ -358,7 +365,8 @@ if run_btn and user_query.strip():
             old_tabs = (answer_tab, data_tab, analysis_tab, report_tab, reader_tab)
             answer_tab, data_tab, analysis_tab, report_tab, reader_tab = [c.container() for c in containers]
             render_seq += 1
-            _render_results(current, progress, snapshots, render_id=f"stream_{render_seq}")
+            _render_results(current, progress, snapshots, render_id=f"stream_{render_seq}",
+                            strategy_series=strategy_series)
             answer_tab, data_tab, analysis_tab, report_tab, reader_tab = old_tabs
             _render_debug(current, debug)
             with status:
@@ -369,6 +377,7 @@ if run_btn and user_query.strip():
         current.update(final_response="运行异常，已保留本轮可用任务结果，请重试。", composition_status="failed")
         status.update(label="研究执行异常", state="error")
     st.session_state.update(last_result=current, report_progress=progress, execution_events=events, debug_events=debug, analysis_snapshots=snapshots,
+                            strategy_series=strategy_series,
                             turn_count=st.session_state["turn_count"] + 1)
     st.session_state["conversation_history"].append({"query": user_query.strip(),
         "response_preview": (current.get("final_response") or "")[:1200],
