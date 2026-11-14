@@ -10,6 +10,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
+from langgraph.config import get_stream_writer
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.prebuilt import ToolNode
 from pydantic import ValidationError
@@ -58,6 +59,15 @@ def failure(kind, message):
     return {"status": "failed", "result": None, "error": {"type": kind, "message": message}}
 
 
+def _emit_diagnostic(details):
+    """Counts and argument keys only; raw identifiers stay out of UI/debug events."""
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        return
+    writer({"event": "analytics_diagnostic", "stage": "analytics", **details})
+
+
 def _stores(config):
     runtime = config.get("configurable") or {}
     ds, analyses = runtime.get("dataset_store"), runtime.get("analysis_store")
@@ -76,7 +86,8 @@ def _canonical_analysis(store, ident, allowed):
 def _check_reuse_assumptions(ref, assumptions):
     applicable = {"analyze_price_performance": ("periods_per_year",),
                   "compare_with_benchmark": ("periods_per_year",),
-                  "compute_factors": ("periods_per_year", "window"), "compare_valuations": ()}
+                  "compute_factors": ("periods_per_year", "window"), "compare_valuations": (),
+                  "build_return_matrix": ("periods_per_year",), "rank_peers": ("periods_per_year", "window")}
     for key in applicable.get(ref["tool_name"], ()):
         if assumptions.get(key) is not None and ref["assumptions"].get(key) != assumptions[key]:
             raise ValueError("已有产物参数与本次指定假设不符")
@@ -174,13 +185,17 @@ def make_agent_node(tools, max_tool_rounds, max_tool_calls):
             for call in calls:
                 args = call["args"]
                 requested = [args[key] for key in ("dataset_id", "benchmark_dataset_id") if key in args]
-                requested.extend(args.get("dataset_ids", []))
+                for key in ("dataset_ids", "price_dataset_ids", "valuation_dataset_ids"):
+                    requested.extend(args.get(key) or [])
                 if not set(requested) <= allowed:
+                    _emit_diagnostic({"error_type": "dataset_scope_error", "tool": call["name"],
+                        "arg_keys": sorted(args), "requested_count": len(requested),
+                        "unauthorized_count": len(set(requested) - allowed), "authorized_count": len(allowed)})
                     return failure("dataset_scope_error", "工具请求的数据集超出本任务授权范围。")
                 # Only caller-specified assumptions override model-chosen/default parameters.
                 for key in ("periods_per_year", "window"):
                     specified = state["assumptions"].get(key)
-                    supports = key == "window" and call["name"] == "compute_factors" or (
+                    supports = key == "window" and call["name"] in {"compute_factors", "rank_peers"} or (
                         key == "periods_per_year" and call["name"] != "compare_valuations")
                     if specified is not None and supports:
                         args[key] = specified

@@ -10,12 +10,15 @@ from src.specialists.analytics.nodes import (
 from src.specialists.analytics.state import AnalyticsState
 from src.specialists.analytics.tools import (
     analyze_price_performance,
+    build_return_matrix,
     compare_valuations,
     compare_with_benchmark,
     compute_factors,
+    rank_peers,
 )
 
-ANALYTICS_TOOLS = [analyze_price_performance, compare_with_benchmark, compute_factors, compare_valuations]
+ANALYTICS_TOOLS = [analyze_price_performance, compare_with_benchmark, compute_factors, compare_valuations,
+                   build_return_matrix, rank_peers]
 
 
 def create_analytics_agent(*, max_tool_rounds: int = 3, max_tool_calls: int = 8, max_output_retries: int = 1):

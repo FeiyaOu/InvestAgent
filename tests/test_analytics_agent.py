@@ -283,3 +283,13 @@ def test_missing_benchmark_returns_requirement_without_model_guessing_id():
     assert result['status'] == 'partial'
     assert result['result']['missing_data_requests'][0]['kind'] == 'price_history'
     llm.invoke.assert_not_called()
+
+
+def test_rank_peers_dataset_lists_are_scope_checked():
+    ds, store, ref, config = setup_data()
+    other = ds.put(ds.get(ref.dataset_id))
+    for key in ("price_dataset_ids", "valuation_dataset_ids"):
+        rogue = AIMessage(content="", tool_calls=[{"name": "rank_peers",
+            "args": {key: [other.dataset_id], "factors": ["momentum"]}, "id": "r1"}])
+        result, _ = run([rogue], {"task": "同行排名", "dataset_refs": [ref.model_dump(mode="json")]}, config)
+        assert result["error"]["type"] == "dataset_scope_error"

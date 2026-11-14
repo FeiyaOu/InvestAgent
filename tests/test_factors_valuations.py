@@ -194,3 +194,37 @@ def test_matching_but_unknown_or_static_pe_basis_is_not_ttm_comparison():
         refs.append(ds.put(raw).dataset_id)
     result = json.loads(compare_valuations.invoke({"dataset_ids": refs}, config=config))
     assert result["analysis_ref"]["metrics"]["pe_ttm.spread"] is None
+
+
+def test_acquisition_reads_ps_ttm_and_explains_missing_ps(monkeypatch):
+    monkeypatch.setenv("USE_REAL_DATA", "true")
+    ds, _, config = context()
+    provider = Mock()
+    provider.stock_value_em.return_value = pd.DataFrame({"数据日期": ["2025-01-03"],
+        "PE(TTM)": [21.], "市净率": [2.1], "市销率": [9.5]})
+    with patch.dict(sys.modules, {"akshare": provider}):
+        result = json.loads(get_valuation_snapshot.invoke({"query": "茅台", "as_of_date": "2025-01-05"}, config=config))
+    data = ds.get(result["dataset_ref"]["dataset_id"])
+    assert data.metrics["ps_ttm"].value == 9.5
+    assert data.metrics["ps_ttm"].basis == "PS_TTM"
+    provider.stock_value_em.return_value = pd.DataFrame({"数据日期": ["2025-01-03"], "PE(TTM)": [21.], "市净率": [2.1]})
+    with patch.dict(sys.modules, {"akshare": provider}):
+        result = json.loads(get_valuation_snapshot.invoke({"query": "茅台", "as_of_date": "2025-01-05"}, config=config))
+    missing = ds.get(result["dataset_ref"]["dataset_id"]).metrics["ps_ttm"]
+    assert missing.value is None and missing.missing_reason
+
+
+def test_ps_ttm_comparison_excludes_nonpositive_values():
+    ds, _, config = context()
+    def with_ps(symbol, ps):
+        return ds.put(ValuationDataset(kind="valuation_snapshot", symbol=symbol, market="SSE", currency="CNY",
+            provider="test", retrieved_at=datetime.now(timezone.utc), data_mode="real", as_of_date=date(2025, 1, 3),
+            metrics={"ps_ttm": {"value": ps, "unit": "multiple", "basis": "PS_TTM"}}))
+    a, b = with_ps("600519", 10.), with_ps("000858", 6.)
+    ref = json.loads(compare_valuations.invoke({"dataset_ids": [a.dataset_id, b.dataset_id],
+        "metrics": ["ps_ttm"]}, config=config))["analysis_ref"]
+    assert ref["metrics"]["ps_ttm.spread"] == 4.
+    c = with_ps("000568", -3.)
+    ref = json.loads(compare_valuations.invoke({"dataset_ids": [a.dataset_id, c.dataset_id],
+        "metrics": ["ps_ttm"]}, config=config))["analysis_ref"]
+    assert ref["metrics"]["ps_ttm.spread"] is None
