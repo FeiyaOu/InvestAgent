@@ -1,7 +1,8 @@
 import pytest
 from pydantic import ValidationError
-from src.orchestration.planner_schemas import TaskPlan
+
 from src.core.validation_diagnostics import validation_diagnostics
+from src.orchestration.planner_schemas import TaskPlan
 
 
 def test_diagnostics_identify_type_without_exposing_values():

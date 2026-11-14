@@ -1,10 +1,10 @@
 """Supervisor/Analytics boundary: scoped references and canonical calculation outputs."""
 from langchain_core.runnables import RunnableConfig
 
-from src.specialists.analytics.artifacts import AnalysisStore
-from src.specialists.analytics.state import AnalyticsResult
 from src.core.datasets import DatasetStore
 from src.core.errors import TaskError
+from src.specialists.analytics.artifacts import AnalysisStore
+from src.specialists.analytics.state import AnalyticsResult
 
 
 def _stores(config):

@@ -33,7 +33,8 @@ def frame():
 
 def test_history_registers_dataset_and_returns_reference_not_rows(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.return_value = frame()
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame()
     store = DatasetStore()
     with patch.dict(sys.modules, {"akshare": provider}):
         result = fetch(store)
@@ -49,7 +50,8 @@ def test_history_registers_dataset_and_returns_reference_not_rows(monkeypatch):
 
 def test_index_history_has_points_and_no_invented_volume(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.index_zh_a_hist.return_value = frame()
+    provider = Mock()
+    provider.index_zh_a_hist.return_value = frame()
     store = DatasetStore()
     with patch.dict(sys.modules, {"akshare": provider}):
         result = fetch(store, query="000300", asset_type="index", adjustment="none")
@@ -61,7 +63,8 @@ def test_index_history_has_points_and_no_invented_volume(monkeypatch):
 
 def test_errors_do_not_register_data_or_fabricate_success(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.side_effect = RuntimeError("secret")
+    provider = Mock()
+    provider.stock_zh_a_hist.side_effect = RuntimeError("secret")
     with patch.dict(sys.modules, {"akshare": provider}):
         for updates in ({}, {"start_date": "bad"}, {"query": "腾讯"},
                         {"start_date": "2025-02-01"}, {"asset_type": "index", "adjustment": "qfq"}):
@@ -73,7 +76,8 @@ def test_errors_do_not_register_data_or_fabricate_success(monkeypatch):
 
 def test_invalid_provider_rows_fail_validation(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.return_value = frame().iloc[::-1]
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame().iloc[::-1]
     with patch.dict(sys.modules, {"akshare": provider}):
         result = fetch(DatasetStore())
     assert result["status"] == "unavailable"
@@ -96,7 +100,8 @@ def test_missing_store_is_explicit_failure():
 
 def test_no_data_does_not_fall_back_to_fake_rows(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_zh_a_hist.return_value = pd.DataFrame()
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = pd.DataFrame()
     with patch.dict(sys.modules, {"akshare": provider}):
         assert fetch(DatasetStore())["error"]["type"] == "no_data"
 
@@ -137,7 +142,8 @@ def test_history_failure_reports_safe_exception_class(monkeypatch):
 
 def test_common_exchange_code_formats_are_normalized(monkeypatch):
     monkeypatch.setenv('USE_REAL_DATA', 'true')
-    provider = Mock(); provider.stock_zh_a_hist.return_value = frame()
+    provider = Mock()
+    provider.stock_zh_a_hist.return_value = frame()
     with patch.dict(sys.modules, {'akshare': provider}):
         for code in ('600519.SH', 'sh600519', 'SH.600519', '600519.sh'):
             result = fetch(DatasetStore(), query=code)
@@ -148,7 +154,8 @@ def test_common_exchange_code_formats_are_normalized(monkeypatch):
 
 def test_index_sina_fallback_filters_full_history(monkeypatch):
     monkeypatch.setenv('USE_REAL_DATA', 'true')
-    provider = Mock(); provider.index_zh_a_hist.side_effect = ConnectionError()
+    provider = Mock()
+    provider.index_zh_a_hist.side_effect = ConnectionError()
     provider.stock_zh_index_daily.return_value = pd.DataFrame({'date': ['2024-12-31', '2025-01-02', '2025-01-03'], 'close': [90., 100., 110.]})
     store = DatasetStore()
     with patch.dict(sys.modules, {'akshare': provider}):

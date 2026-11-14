@@ -3,11 +3,11 @@ import json
 from datetime import date, datetime, timezone
 from unittest.mock import Mock, patch
 
+from src.core.datasets import DatasetStore, PriceDataset
+from src.orchestration.parent_graph import create_parent_graph
+from src.orchestration.supervisor import create_supervisor_graph
 from src.specialists.analytics.artifacts import AnalysisStore
 from src.specialists.analytics.tools import analyze_price_performance
-from src.core.datasets import DatasetStore, PriceDataset
-from src.orchestration.supervisor import create_supervisor_graph
-from src.orchestration.parent_graph import create_parent_graph
 
 
 def task(ident, category, deps=None):
@@ -25,7 +25,8 @@ def setup():
         adjustment="qfq", asset_type="stock", price_unit="CNY/share", volume_unit="not_available",
         rows=[{"date": date(2025, 1, i+1), "close": float(v)} for i, v in enumerate([100, 110, 99])]))
     config = {"configurable": {"dataset_store": ds, "analysis_store": store}}
-    md = Mock(); md.invoke.return_value = {"status": "completed", "error": None, "result": {
+    md = Mock()
+    md.invoke.return_value = {"status": "completed", "error": None, "result": {
         "answer": "已有历史数据", "evidence_ids": [], "evidence": [], "missing_information": [],
         "dataset_refs": [ref.model_dump(mode="json")]}}
     return ds, store, ref, config, md
@@ -41,7 +42,8 @@ def result(ref, analysis=None, status="completed"):
 def test_dispatch_hands_off_only_dependency_refs_and_validates_artifact():
     ds, store, ref, config, md = setup()
     created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
-    analytics = Mock(); analytics.invoke.return_value = result(ref, created)
+    analytics = Mock()
+    analytics.invoke.return_value = result(ref, created)
     graph = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics)
     state = graph.invoke({"plan": plan(task("m", "market_data"), task("a", "analytics", ["m"]))}, config=config)
     record = state["task_results"]["a"]
@@ -57,7 +59,8 @@ def test_dispatch_hands_off_only_dependency_refs_and_validates_artifact():
 def test_analytics_chain_reuses_dependency_artifact_and_deduplicates_data():
     _, _, ref, config, md = setup()
     created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
-    analytics = Mock(); analytics.invoke.side_effect = [result(ref, created), result(ref, created)]
+    analytics = Mock()
+    analytics.invoke.side_effect = [result(ref, created), result(ref, created)]
     graph = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics)
     state = graph.invoke({"plan": plan(task("m", "market_data"), task("a", "analytics", ["m"]),
         task("b", "analytics", ["m", "a"]))}, config=config)
@@ -70,7 +73,8 @@ def test_analytics_chain_reuses_dependency_artifact_and_deduplicates_data():
 def test_unrelated_or_expired_data_is_not_exposed():
     ds, _, ref, config, md = setup()
     foreign = ds.put(ds.get(ref.dataset_id))
-    analytics = Mock(); analytics.invoke.return_value = result(foreign)
+    analytics = Mock()
+    analytics.invoke.return_value = result(foreign)
     state = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics).invoke({
         "plan": plan(task("m", "market_data"), task("a", "analytics", ["m"]))}, config=config)
     assert state["task_results"]["a"]["status"] == "failed"
@@ -84,7 +88,8 @@ def test_unrelated_or_expired_data_is_not_exposed():
 
 def test_failed_analytics_blocks_downstream_and_strategy_requires_runtime_store():
     _, _, ref, config, md = setup()
-    analytics = Mock(); analytics.invoke.return_value = {"status": "failed", "result": None,
+    analytics = Mock()
+    analytics.invoke.return_value = {"status": "failed", "result": None,
         "error": {"type": "invalid_output", "message": "输出验证失败"}}
     state = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics).invoke({"plan": plan(
         task("m", "market_data"), task("a", "analytics", ["m"]), task("b", "analytics", ["a"]),
@@ -107,8 +112,10 @@ def test_parent_creates_both_stores_per_request_and_keeps_them_out_of_state():
     md = Mock()
     md.invoke.return_value = {"status": "completed", "error": None, "result": {
         "answer": "行情", "evidence_ids": [], "evidence": [], "missing_information": []}}
-    chain = Mock(); chain.invoke.return_value = plan(task("m", "market_data"))
-    composing = Mock(); composing.invoke.return_value = {"answer": "行情"}
+    chain = Mock()
+    chain.invoke.return_value = plan(task("m", "market_data"))
+    composing = Mock()
+    composing.invoke.return_value = {"answer": "行情"}
     graph = create_parent_graph(market_data_graph=md)
     with patch("src.orchestration.planner._create_chain", return_value=chain), patch("src.orchestration.composer._create_chain", return_value=composing):
         outputs = [graph.invoke({"user_query": "查询"}) for _ in range(2)]
@@ -132,8 +139,10 @@ def test_real_analytics_executes_with_market_produced_data_in_parent_graph():
         return {"status": "completed", "error": None, "result": {"answer": "历史数据已获取", "evidence_ids": [],
             "evidence": [], "missing_information": [], "dataset_refs": [ref.model_dump(mode="json")]}}
     md.invoke.side_effect = collect
-    planning = Mock(); planning.invoke.return_value = plan(task("m", "market_data"), task("a", "analytics", ["m"]))
-    llm = Mock(); llm.bind_tools.return_value = llm
+    planning = Mock()
+    planning.invoke.return_value = plan(task("m", "market_data"), task("a", "analytics", ["m"]))
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     def respond(messages):
         if messages[-1].content.startswith("计算结果清单"):
             manifest = json.loads(messages[-1].content.split("\n", 1)[1])
@@ -143,7 +152,8 @@ def test_real_analytics_executes_with_market_produced_data_in_parent_graph():
         return AIMessage(content="", tool_calls=[{"id": "c", "name": "analyze_price_performance",
             "args": {"dataset_id": inputs["dataset_refs"][0]["dataset_id"]}}])
     llm.invoke.side_effect = respond
-    composing = Mock(); composing.invoke.return_value = {"answer": "任务执行完成"}
+    composing = Mock()
+    composing.invoke.return_value = {"answer": "任务执行完成"}
     with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
             "src.specialists.analytics.nodes.create_llm", return_value=llm), patch("src.orchestration.composer._create_chain", return_value=composing):
         state = create_parent_graph(market_data_graph=md).invoke({"user_query": "分析茅台历史表现"})
@@ -161,7 +171,8 @@ def test_unrelated_task_data_not_granted_and_tool_numbers_cannot_be_forged():
     forged["result"]["findings"] = [{"analysis_id": created["analysis_id"],
         "tool_name": created["tool_name"], "metrics": {"period_return": 999.},
         "metric_units": {"period_return": "fraction"}, "table": []}]
-    analytics = Mock(); analytics.invoke.return_value = forged
+    analytics = Mock()
+    analytics.invoke.return_value = forged
     state = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics).invoke({
         "plan": plan(task("m", "market_data"), task("a", "analytics", ["m"]))}, config=config)
     assert state["task_results"]["a"]["result"]["findings"][0]["metrics"] == created["metrics"]
@@ -177,7 +188,8 @@ def test_unrelated_task_data_not_granted_and_tool_numbers_cannot_be_forged():
 def test_planned_analytics_parameters_reach_subagent_and_task_result():
     _, _, ref, config, md = setup()
     created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
-    analytics = Mock(); analytics.invoke.return_value = result(ref, created)
+    analytics = Mock()
+    analytics.invoke.return_value = result(ref, created)
     analytical = task("a", "analytics", ["m"])
     analytical["analytics_parameters"] = {"subjects": ["贵州茅台"], "time_range": "2025-01-01至2025-01-03",
         "assumptions": {"periods_per_year": 252, "window": 20}}
@@ -193,7 +205,8 @@ def test_planned_analytics_parameters_reach_subagent_and_task_result():
 def test_cited_chart_artifacts_are_exported_as_custom_events_not_parent_state():
     _, _, ref, config, md = setup()
     created = json.loads(analyze_price_performance.invoke({"dataset_id": ref.dataset_id}, config=config))["analysis_ref"]
-    analytics = Mock(); analytics.invoke.return_value = result(ref, created)
+    analytics = Mock()
+    analytics.invoke.return_value = result(ref, created)
     graph = create_supervisor_graph(market_data_graph=md, analytics_graph=analytics)
     events = list(graph.stream({"plan": plan(task("m", "market_data"), task("a", "analytics", ["m"]))},
                               config=config, stream_mode=["updates", "custom"], subgraphs=True))

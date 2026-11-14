@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+
 from app.example_queries import example_queries
 
 

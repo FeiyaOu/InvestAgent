@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
 from src.orchestration.supervisor_state import ReportParameters
-from src.orchestration.task_contracts import validate_task_results  # Public boundary helper.
+from src.orchestration.task_contracts import validate_task_results  # noqa: F401  # Public boundary helper.
 
 
 class ParentRequest(BaseModel):

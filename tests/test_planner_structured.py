@@ -3,13 +3,13 @@ import json
 from unittest.mock import patch
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.exceptions import OutputParserException
 
 from src.core.llm import create_llm
-from src.orchestration.planner_schemas import TaskPlan, planner_output_schema
 from src.orchestration.planner import _create_chain
+from src.orchestration.planner_schemas import TaskPlan, planner_output_schema
 
 INPUT = {'user_query': '分析茅台表现', 'conversation_context': '', 'correction': '', 'current_date': '2026-11-13'}
 PAYLOAD = {'status': 'ready', 'tasks': [

@@ -1,8 +1,8 @@
 """Independent subgraph tests: no real LLM or market API."""
 import json
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
@@ -183,9 +183,11 @@ def test_output_repair_does_not_bind_tools_or_execute_new_calls():
 
 def test_history_tool_reference_is_collected_from_store_not_model(monkeypatch):
     import json
+
     from src.core.datasets import DatasetStore
     monkeypatch.setenv("USE_REAL_DATA", "false")
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
         "name": "get_price_history", "args": {"query": "600519", "start_date": "2025-01-02",
             "end_date": "2025-01-03"}, "id": "history1"}]),
@@ -203,7 +205,8 @@ def test_history_tool_reference_is_collected_from_store_not_model(monkeypatch):
 def test_valuation_snapshot_reference_is_collected_by_market_agent(monkeypatch):
     from src.core.datasets import DatasetStore
     monkeypatch.setenv("USE_REAL_DATA", "false")
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     llm.invoke.side_effect = [AIMessage(content="", tool_calls=[{
         "name": "get_valuation_snapshot", "args": {"query": "茅台", "as_of_date": "2025-01-03"}, "id": "v1"}]),
         answer(evidence_ids=["v1"], missing_information=["股息率缺失"]) ]

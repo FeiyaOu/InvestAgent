@@ -1,7 +1,9 @@
 from datetime import date
+
 import pytest
 from pydantic import ValidationError
-from src.specialists.strategy.state import Portfolio, StrategyParameters, StrategyInput
+
+from src.specialists.strategy.state import Portfolio, StrategyInput, StrategyParameters
 
 
 def portfolio(**kw):
@@ -13,7 +15,8 @@ def test_portfolio_rejects_wrong_total_duplicates_and_nonfinite():
     for updates in ({'cash_weight': 0.}, {'positions': [{'symbol':'600519','weight':float('nan')}]},
                     {'positions':[{'symbol':'600519','weight':.4},{'symbol':'600519','weight':.4}]},
                     {'positions':[{'symbol':'600519','weight':-.2}]}):
-        with pytest.raises(ValidationError): Portfolio.model_validate(portfolio(**updates))
+        with pytest.raises(ValidationError):
+            Portfolio.model_validate(portfolio(**updates))
     assert Portfolio.model_validate(portfolio()).cash_weight == .2
 
 
@@ -32,6 +35,6 @@ def test_optional_null_limits_and_scenarios_do_not_invent_inputs():
 
 
 def test_narrative_schema_does_not_require_model_to_select_executed_artifacts():
-    from src.specialists.strategy.state import strategy_answer_schema, StrategyAnswer
+    from src.specialists.strategy.state import StrategyAnswer, strategy_answer_schema
     assert 'artifact_ids' not in strategy_answer_schema()['properties']
     assert 'artifact_ids' in StrategyAnswer.model_json_schema()['properties']

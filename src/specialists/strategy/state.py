@@ -1,11 +1,12 @@
 """Independent Strategy/Risk contracts; no orchestration or market acquisition."""
 from datetime import date
-from typing import Annotated, Literal
 from math import isclose
-from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
-from typing_extensions import TypedDict
+from typing import Annotated, Literal
+
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing_extensions import TypedDict
 
 
 class StrictModel(BaseModel):

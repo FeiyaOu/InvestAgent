@@ -7,8 +7,8 @@ import pandas as pd
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
-from src.specialists.analytics.artifacts import AnalysisStore
 from src.core.datasets import DatasetStore, PriceDataset
+from src.specialists.analytics.artifacts import AnalysisStore
 
 
 def _context(config, periods_per_year):

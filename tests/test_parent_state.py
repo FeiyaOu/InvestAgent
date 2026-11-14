@@ -65,17 +65,20 @@ def test_result_map_validates_keys_without_mutating_input():
 
 def test_existing_planner_supervisor_composer_accept_parent_fields():
     from unittest.mock import Mock, patch
+
+    from src.orchestration.composer import composer
     from src.orchestration.planner import planner
     from src.orchestration.supervisor import create_supervisor_graph
-    from src.orchestration.composer import composer
 
     state = create_parent_state("茅台最新价格")
     planned = {"status": "ready", "tasks": [{k: v for k, v in record().items()
                 if k in {"task_id", "category", "question", "depends_on"}}], "clarification_questions": []}
-    chain = Mock(); chain.invoke.return_value = planned
+    chain = Mock()
+    chain.invoke.return_value = planned
     with patch("src.orchestration.planner._create_chain", return_value=chain):
         state.update(planner(state))
-    md = Mock(); md.invoke.return_value = {"status": "completed", "error": None, "result": {
+    md = Mock()
+    md.invoke.return_value = {"status": "completed", "error": None, "result": {
         "answer": "100元", "evidence_ids": [], "evidence": [], "missing_information": []}}
     executed = create_supervisor_graph(market_data_graph=md, report_graph=Mock()).invoke({
         "plan": state["plan"], "report_parameters": state["report_parameters"]})

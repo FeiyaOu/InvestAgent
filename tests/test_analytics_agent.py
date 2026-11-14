@@ -5,9 +5,9 @@ from unittest.mock import Mock, patch
 
 from langchain_core.messages import AIMessage
 
+from src.core.datasets import DatasetStore, PriceDataset
 from src.specialists.analytics.agent import create_analytics_agent
 from src.specialists.analytics.artifacts import AnalysisStore
-from src.core.datasets import DatasetStore, PriceDataset
 
 
 def setup_data(mode="real"):
@@ -36,7 +36,9 @@ def result_answer(messages):
 
 
 def run(responses, inputs=None, config=None, **options):
-    llm = Mock(); llm.bind_tools.return_value = llm; llm.invoke.side_effect = responses
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = responses
     graph = create_analytics_agent(**options)
     with patch("src.specialists.analytics.nodes.create_llm", return_value=llm):
         result = graph.invoke(inputs or {"task": "分析茅台表现"}, config=config)
@@ -45,7 +47,8 @@ def run(responses, inputs=None, config=None, **options):
 
 def test_tools_compute_and_final_output_uses_actual_artifacts():
     ds, store, ref, config = setup_data()
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     counter = iter(["call", "answer"])
     def respond(messages):
         return call(ref.dataset_id) if next(counter) == "call" else result_answer(messages)
@@ -260,7 +263,8 @@ def test_valuation_references_cannot_be_dismissed_without_computation():
             'pe_ttm': {'value': pe, 'unit': 'multiple', 'basis': 'PE_TTM'},
             'pb': {'value': pb, 'unit': 'multiple', 'basis': 'PB_MRQ'}})).model_dump(mode='json')
         for symbol, market, pe, pb in [('600519', 'SSE', 21., 6.), ('000858', 'SZSE', 23., 2.)]]
-    llm = Mock(); llm.bind_tools.return_value = llm
+    llm = Mock()
+    llm.bind_tools.return_value = llm
     replies = iter([False, True])
     def respond(messages):
         return result_answer(messages) if next(replies) else answer(missing_information=['未看到估值字段'])

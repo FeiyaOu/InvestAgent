@@ -1,5 +1,7 @@
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
+
 import pytest
+
 from src.orchestration.parent_graph import create_parent_graph
 from src.orchestration.planner_schemas import TaskPlan
 from tests.test_strategy_agent import answer
@@ -17,7 +19,9 @@ def test_plan_parameters_and_real_parent_dispatch_to_strategy_with_stores():
     task=strategy_task()
     payload={'status':'ready','tasks':[task],'clarification_questions':[]}
     assert TaskPlan.model_validate(payload).to_state()['tasks'][0]['strategy_parameters']['portfolio']['as_of_date']=='2026-11-13'
-    llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
+    llm=Mock()
+    llm.bind_tools.return_value=llm
+    llm.invoke.side_effect=answer
     with patch('src.orchestration.planner._create_chain') as planner, patch('src.specialists.strategy.nodes.create_llm',return_value=llm), patch('src.orchestration.composer._create_chain',side_effect=RuntimeError()):
         planner.return_value.invoke.return_value=payload
         result=create_parent_graph().invoke({'user_query':'检查组合'})
@@ -29,5 +33,7 @@ def test_plan_parameters_and_real_parent_dispatch_to_strategy_with_stores():
 
 
 def test_parameters_cannot_be_attached_to_other_category():
-    task=strategy_task();task['category']='market_data'
-    with pytest.raises(ValueError): TaskPlan.model_validate({'status':'ready','tasks':[task],'clarification_questions':[]})
+    task=strategy_task()
+    task['category']='market_data'
+    with pytest.raises(ValueError):
+        TaskPlan.model_validate({'status':'ready','tasks':[task],'clarification_questions':[]})

@@ -1,7 +1,7 @@
 """Request-local deterministic Strategy artifacts, scoped to one specialist execution."""
+import json
 from copy import deepcopy
 from datetime import datetime, timezone
-import json
 from threading import RLock
 from uuid import uuid4
 

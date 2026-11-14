@@ -1,10 +1,12 @@
 """Deterministic V1 risk checks and static price shocks; no market API or LLM."""
 import json
-from langchain_core.tools import tool
+
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
 from pydantic import ValidationError
-from src.specialists.strategy.state import StrategyInput
+
 from src.specialists.strategy.artifacts import StrategyStore
+from src.specialists.strategy.state import StrategyInput
 
 
 def _context(config):

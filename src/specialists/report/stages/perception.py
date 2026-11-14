@@ -17,13 +17,13 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.core.llm import FAST_MODEL, create_llm
-from src.specialists.report.state import InvestAgentState
 from src.data.tools import (
     get_index_performance,
     get_macro_indicators,
     get_sector_performance,
     search_stock_news,
 )
+from src.specialists.report.state import InvestAgentState
 
 # ---- 角色 Persona（Hat System）----
 _SYSTEM = """你是一名专业的市场数据分析师。

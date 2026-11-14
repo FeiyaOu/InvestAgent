@@ -1,6 +1,7 @@
-from datetime import date
 import json
+
 import pytest
+
 from src.specialists.strategy.artifacts import StrategyStore
 from src.specialists.strategy.state import StrategyInput
 from src.specialists.strategy.tools import evaluate_risk_constraints, stress_test_portfolio
@@ -31,7 +32,8 @@ def test_constraint_and_stress_values_are_deterministic():
     saved = store.get(stress['artifact_id'], 's')
     saved['scenario_results'].clear()
     assert store.get(stress['artifact_id'], 's')['scenario_results']
-    with pytest.raises(ValueError): store.get(stress['artifact_id'], 'another-task')
+    with pytest.raises(ValueError):
+        store.get(stress['artifact_id'], 'another-task')
 
 
 def test_missing_portfolio_and_uncovered_shock_do_not_imply_zero():
@@ -53,8 +55,8 @@ def test_no_constraints_does_not_create_suitability_thresholds():
 
 
 def test_asset_risk_uses_canonical_history_and_never_future_samples():
-    from tests.test_analytics_agent import setup_data
     from src.specialists.analytics.tools import analyze_price_performance
+    from tests.test_analytics_agent import setup_data
     _,_,ref,analytics_cfg=setup_data()
     analysis=json.loads(analyze_price_performance.invoke({'dataset_id':ref.dataset_id},config=analytics_cfg))['analysis_ref']
     _,cfg=context(subjects=['600519'],portfolio=None,risk_constraints={'max_asset_drawdown':.05},analysis_refs=[analysis],dataset_refs=analysis['dataset_refs'])

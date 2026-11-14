@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import ValidationError
 
-from src.orchestration.planner_schemas import TaskPlan
 from src.orchestration.planner import planner
+from src.orchestration.planner_schemas import TaskPlan
 
 
 def task(ident="t1", category="market_data", deps=None):
@@ -112,7 +112,8 @@ def test_empty_input_does_not_call_llm():
 
 
 def test_contract_rejects_whitespace_and_excess_tasks():
-    payload = plan(); payload["tasks"][0]["question"] = "  "
+    payload = plan()
+    payload["tasks"][0]["question"] = "  "
     with pytest.raises(ValidationError):
         TaskPlan.model_validate(payload)
     with pytest.raises(ValidationError):
@@ -122,6 +123,7 @@ def test_contract_rejects_whitespace_and_excess_tasks():
 def test_real_chain_parses_mock_model_json_and_repairs_malformed_json(monkeypatch):
     monkeypatch.setenv("PLANNER_OUTPUT_MODE", "json")
     import json
+
     from langchain_core.messages import AIMessage
     from langchain_core.runnables import RunnableLambda
 
@@ -139,7 +141,8 @@ def test_real_chain_parses_mock_model_json_and_repairs_malformed_json(monkeypatc
 
 
 def test_planner_can_be_registered_as_graph_node():
-    from langgraph.graph import START, END, StateGraph
+    from langgraph.graph import END, START, StateGraph
+
     from src.orchestration.planner_schemas import PlannerState
 
     graph = StateGraph(PlannerState)
@@ -192,6 +195,7 @@ def test_report_task_rejects_analytics_parameters():
 def test_planner_prompt_provides_current_date_and_collection_rules(monkeypatch):
     monkeypatch.setenv("PLANNER_OUTPUT_MODE", "json")
     import json
+
     from langchain_core.messages import AIMessage
     from langchain_core.runnables import RunnableLambda
     prompts = []

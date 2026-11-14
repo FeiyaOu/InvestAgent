@@ -2,24 +2,24 @@
 import json
 from copy import deepcopy
 from uuid import uuid4
-from src.specialists.strategy.agent import create_strategy_agent
-from src.specialists.strategy.handoff import strategy_inputs, strategy_result
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, StateGraph
 from langgraph.config import get_stream_writer
+from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
+from src.core.errors import TaskError
+from src.orchestration.planner_schemas import TaskPlan
+from src.orchestration.supervisor_state import ReportParameters, SupervisorState
+from src.orchestration.task_contracts import TaskResult
 from src.specialists.analytics.agent import create_analytics_agent
 from src.specialists.analytics.handoff import analytics_inputs, analytics_result
 from src.specialists.market_data.agent import create_market_data_agent
 from src.specialists.market_data.state import MarketDataResult
-from src.orchestration.planner_schemas import TaskPlan
 from src.specialists.report.graph import create_report_graph
 from src.specialists.report.stages.reporter import validate_report
-from src.orchestration.supervisor_state import ReportParameters, SupervisorState
-from src.core.errors import TaskError
-from src.orchestration.task_contracts import TaskResult
+from src.specialists.strategy.agent import create_strategy_agent
+from src.specialists.strategy.handoff import strategy_inputs, strategy_result
 
 
 def _error(kind, message):

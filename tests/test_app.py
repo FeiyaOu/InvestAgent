@@ -1,6 +1,7 @@
 """Streamlit parent-graph UI migration; no external API calls."""
 from pathlib import Path
 from unittest.mock import Mock, patch
+
 from streamlit.testing.v1 import AppTest
 
 _APP = str(Path(__file__).parent.parent / "app" / "streamlit_app.py")
@@ -70,7 +71,8 @@ def test_report_nodes_remain_visible_when_final_report_is_unreadable():
 
 
 def test_rerender_does_not_execute_again_and_new_chat_clears_summary():
-    graph = fake(); at = submit(graph)
+    graph = fake()
+    at = submit(graph)
     at.run()
     assert graph.stream.call_count == 1
     next(b for b in at.button if "新对话" in b.label).click()
@@ -95,7 +97,8 @@ def test_multiple_reports_stream_under_their_task_ids():
 
 
 def test_clarification_display_skips_task_execution():
-    graph = Mock(); graph.stream.return_value = iter([
+    graph = Mock()
+    graph.stream.return_value = iter([
         ((), "updates", {"planner": {"planning_status": "needs_clarification", "plan": {
             "status": "needs_clarification", "tasks": [], "clarification_questions": ["哪家公司？"]}}}),
         ((), "updates", {"composer": {"final_response": "哪家公司？", "composition_status": "needs_clarification"}})])
@@ -106,12 +109,15 @@ def test_clarification_display_skips_task_execution():
 
 def test_real_parent_stream_drives_ui_with_mocked_specialists():
     from src.orchestration.parent_graph import create_parent_graph
-    md = Mock(); md.invoke.return_value = {"status": "completed", "error": None, "result": {
+    md = Mock()
+    md.invoke.return_value = {"status": "completed", "error": None, "result": {
         "answer": "实际父图100元", "evidence": [], "evidence_ids": [], "missing_information": []}}
-    planning = Mock(); planning.invoke.return_value = {"status": "ready", "tasks": [
+    planning = Mock()
+    planning.invoke.return_value = {"status": "ready", "tasks": [
         {"task_id": "m", "category": "market_data", "question": "查茅台", "depends_on": []}],
         "clarification_questions": []}
-    composing = Mock(); composing.invoke.return_value = {"answer": "实际父图100元"}
+    composing = Mock()
+    composing.invoke.return_value = {"answer": "实际父图100元"}
     with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
             "src.orchestration.composer._create_chain", return_value=composing):
         at = submit(create_parent_graph(market_data_graph=md, report_graph=Mock()))
@@ -197,11 +203,13 @@ def test_planner_diagnostic_events_display_and_survive_rerun():
 
 
 def test_strategy_results_display_deterministic_checks_and_scenarios():
-    from tests.test_strategy_tools import context
-    from tests.test_strategy_agent import answer
     from src.specialists.strategy.agent import create_strategy_agent
+    from tests.test_strategy_agent import answer
+    from tests.test_strategy_tools import context
     _,cfg=context()
-    llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
+    llm=Mock()
+    llm.bind_tools.return_value=llm
+    llm.invoke.side_effect=answer
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
     record=task('s','investment_strategy',result=result['result'])
@@ -234,7 +242,8 @@ def test_completed_report_can_be_read_and_downloaded_without_reexecution(valid_r
     assert {'下载 Markdown','下载 HTML'}=={b.proto.label for b in buttons}
     at.run()
     assert not at.exception and graph.stream.call_count==1
-    next(b for b in at.button if '新对话' in b.label).click();at.run()
+    next(b for b in at.button if '新对话' in b.label).click()
+    at.run()
     assert not at.get('download_button')
 
 
@@ -265,9 +274,11 @@ def test_product_views_and_collapsed_developer_area_are_separated():
 def test_example_click_only_fills_input_and_report_center_offers_report_example():
     with patch('src.agent.create_invest_agent') as factory:
         at=AppTest.from_file(_APP).run()
-        next(b for b in at.button if b.label=='比较两家公司').click();at.run()
+        next(b for b in at.button if b.label=='比较两家公司').click()
+        at.run()
         assert '收益、波动率和最大回撤' in at.text_area(key='query_input').value
         factory.assert_not_called()
-        next(b for b in at.button if b.label=='试试生成报告').click();at.run()
+        next(b for b in at.button if b.label=='试试生成报告').click()
+        at.run()
         assert '请生成新能源行业' in at.text_area(key='query_input').value
         factory.assert_not_called()

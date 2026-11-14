@@ -1,9 +1,19 @@
 """Independent Analytics LangGraph subgraph; no parent dispatch/UI integration yet."""
 from langgraph.graph import END, START, StateGraph
 
+from src.specialists.analytics.nodes import (
+    initialize,
+    make_agent_node,
+    make_finalize_node,
+    make_tools_node,
+)
 from src.specialists.analytics.state import AnalyticsState
-from src.specialists.analytics.tools import analyze_price_performance, compare_with_benchmark, compute_factors, compare_valuations
-from src.specialists.analytics.nodes import initialize, make_agent_node, make_tools_node, make_finalize_node
+from src.specialists.analytics.tools import (
+    analyze_price_performance,
+    compare_valuations,
+    compare_with_benchmark,
+    compute_factors,
+)
 
 ANALYTICS_TOOLS = [analyze_price_performance, compare_with_benchmark, compute_factors, compare_valuations]
 

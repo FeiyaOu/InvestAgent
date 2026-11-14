@@ -18,7 +18,8 @@ def state(*records):
 
 
 def test_composer_passes_original_query_and_preserves_task_statuses():
-    chain = Mock(); chain.invoke.return_value = {"answer": "查询到价格100元。"}
+    chain = Mock()
+    chain.invoke.return_value = {"answer": "查询到价格100元。"}
     with patch("src.orchestration.composer._create_chain", return_value=chain):
         result = composer(state(record(), {**record("a", "analytics", "unsupported"), "result": None}))
     assert "100元" in result["final_response"]
@@ -28,7 +29,8 @@ def test_composer_passes_original_query_and_preserves_task_statuses():
 
 
 def test_report_body_and_intermediates_never_reach_composer_model():
-    chain = Mock(); chain.invoke.return_value = {"answer": "报告任务已处理。"}
+    chain = Mock()
+    chain.invoke.return_value = {"answer": "报告任务已处理。"}
     r = record("r", "report", result={"final_report": "SECRET_REPORT", "world_model": "SECRET_MODEL"})
     with patch("src.orchestration.composer._create_chain", return_value=chain):
         result = composer(state(r))
@@ -38,7 +40,8 @@ def test_report_body_and_intermediates_never_reach_composer_model():
 
 
 def test_model_failure_falls_back_to_available_results():
-    chain = Mock(); chain.invoke.side_effect = RuntimeError("secret")
+    chain = Mock()
+    chain.invoke.side_effect = RuntimeError("secret")
     with patch("src.orchestration.composer._create_chain", return_value=chain):
         result = composer(state(record()))
     assert result["composition_status"] == "fallback"
@@ -47,7 +50,8 @@ def test_model_failure_falls_back_to_available_results():
 
 
 def test_empty_model_output_uses_fallback():
-    chain = Mock(); chain.invoke.return_value = {"answer": " "}
+    chain = Mock()
+    chain.invoke.return_value = {"answer": " "}
     with patch("src.orchestration.composer._create_chain", return_value=chain):
         result = composer(state(record()))
     assert result["composition_status"] == "fallback"
@@ -68,7 +72,8 @@ def test_missing_data_mock_mode_and_sources_are_visible():
     r = record(status="partial", result={"answer": "100元", "missing_information": ["缺少交易日期"],
         "evidence": [{"tool_name": "quote", "retrieved_at": "2026-11-10", "as_of_date": None,
                       "data_mode": "mock", "source_url": "https://example.com"}]})
-    chain = Mock(); chain.invoke.return_value = {"answer": "结果仅供演示。"}
+    chain = Mock()
+    chain.invoke.return_value = {"answer": "结果仅供演示。"}
     with patch("src.orchestration.composer._create_chain", return_value=chain):
         result = composer(state(r))
     for text in ("缺少交易日期", "mock", "2026-11-10", "https://example.com", "部分完成"):
@@ -76,10 +81,12 @@ def test_missing_data_mock_mode_and_sources_are_visible():
 
 
 def test_supervisor_then_composer_graph_preserves_records():
-    md = Mock(); md.invoke.return_value = {"status": "completed", "error": None,
+    md = Mock()
+    md.invoke.return_value = {"status": "completed", "error": None,
         "result": {"answer": "100元", "evidence": [], "evidence_ids": [], "missing_information": []}}
     report = Mock()
-    chain = Mock(); chain.invoke.return_value = {"answer": "股价100元。"}
+    chain = Mock()
+    chain.invoke.return_value = {"answer": "股价100元。"}
     task = {"task_id": "m", "category": "market_data", "question": "查茅台价格", "depends_on": []}
     graph = create_response_graph(market_data_graph=md, report_graph=report)
     with patch("src.orchestration.composer._create_chain", return_value=chain):
@@ -150,7 +157,8 @@ def analytical_record():
 
 
 def test_composer_includes_analytics_metrics_assumptions_and_limits():
-    chain = Mock(); chain.invoke.return_value = {"answer": "历史收益5%，部分指标不可用。"}
+    chain = Mock()
+    chain.invoke.return_value = {"answer": "历史收益5%，部分指标不可用。"}
     with patch("src.orchestration.composer._create_chain", return_value=chain):
         result = composer(state(analytical_record()))
     assert "5.00%" in result["final_response"]
@@ -160,7 +168,8 @@ def test_composer_includes_analytics_metrics_assumptions_and_limits():
 
 
 def test_analytics_metrics_remain_visible_when_composition_model_fails():
-    chain = Mock(); chain.invoke.side_effect = RuntimeError("offline")
+    chain = Mock()
+    chain.invoke.side_effect = RuntimeError("offline")
     with patch("src.orchestration.composer._create_chain", return_value=chain):
         result = composer(state(analytical_record()))
     assert result["composition_status"] == "fallback"

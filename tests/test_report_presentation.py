@@ -1,6 +1,8 @@
 import json
+
 import pytest
-from app.report_viewer import prepare_report, report_markdown, report_html
+
+from app.report_viewer import prepare_report, report_html, report_markdown
 
 
 def test_exports_include_all_report_sections(valid_report):
@@ -27,8 +29,10 @@ def test_html_escapes_generated_content_and_unsafe_sources(valid_report):
 
 
 def test_invalid_json_is_rejected_and_partial_report_is_labeled_draft(valid_report):
-    with pytest.raises(ValueError): prepare_report('bad json')
-    with pytest.raises(ValueError): prepare_report('[]')
+    with pytest.raises(ValueError):
+        prepare_report('bad json')
+    with pytest.raises(ValueError):
+        prepare_report('[]')
     valid_report['sources']=[]
     report,errors=prepare_report(valid_report)
     assert errors and '草稿' in report_markdown(report,errors) and '草稿' in report_html(report,errors)

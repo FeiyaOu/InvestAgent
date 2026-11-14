@@ -18,8 +18,10 @@ def market(answer="行情", status="completed"):
 
 
 def build(market_output=None, report_output=None):
-    md = Mock(); md.invoke.return_value = market() if market_output is None else market_output
-    report = Mock(); report.invoke.return_value = report_output
+    md = Mock()
+    md.invoke.return_value = market() if market_output is None else market_output
+    report = Mock()
+    report.invoke.return_value = report_output
     return create_supervisor_graph(market_data_graph=md, report_graph=report), md, report
 
 
@@ -37,7 +39,8 @@ def test_dependency_order_and_partial_evidence_handoff():
     graph, md, _ = build()
     evidence = {"tool_call_id": "c", "tool_name": "lookup", "content": "quote", "retrieved_at": "now",
                 "status": "returned", "data_mode": "real"}
-    source = market(status="partial"); source["result"]["evidence"] = [evidence]
+    source = market(status="partial")
+    source["result"]["evidence"] = [evidence]
     md.invoke.side_effect = [source, market()]
     state = graph.invoke({"plan": plan(task("b", deps=["a"]), task("a"))})
     assert [call.args[0]["task"] for call in md.invoke.call_args_list] == ["查询 a", "查询 b"]
@@ -131,9 +134,11 @@ def test_malformed_report_preserves_node_outputs():
 
 def test_actual_subgraphs_can_execute_with_nested_config(valid_report):
     import json
-    from unittest.mock import patch
     from contextlib import ExitStack
+    from unittest.mock import patch
+
     from langchain_core.messages import AIMessage
+
     from src.specialists.market_data.agent import create_market_data_agent
     from src.specialists.report.graph import create_report_graph
 

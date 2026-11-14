@@ -1,18 +1,22 @@
 import json
 from unittest.mock import Mock, patch
+
 import pytest
+
+from src.specialists.analytics.tools import analyze_price_performance
 from src.specialists.strategy.agent import create_strategy_agent
-from src.specialists.strategy.handoff import strategy_result, canonical_request, strategy_inputs
+from src.specialists.strategy.handoff import canonical_request, strategy_inputs, strategy_result
+from tests.test_analytics_agent import setup_data
 from tests.test_strategy_agent import answer
 from tests.test_strategy_tools import context
-from tests.test_analytics_agent import setup_data
-from src.specialists.analytics.tools import analyze_price_performance
 
 
 def test_forged_child_numbers_are_rebuilt_and_cross_task_scope_is_rejected():
     _,cfg=context()
     cfg['configurable']['strategy_expected_scope']='scope1'
-    llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
+    llm=Mock()
+    llm.bind_tools.return_value=llm
+    llm.invoke.side_effect=answer
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         raw=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
     raw['result']['scenario_results'][0]['portfolio_return']=999
@@ -20,20 +24,24 @@ def test_forged_child_numbers_are_rebuilt_and_cross_task_scope_is_rejected():
     assert status=='completed'
     assert result['scenario_results'][0]['portfolio_return']==pytest.approx(-.08)
     raw['scope_id']='other'
-    with pytest.raises(ValueError): strategy_result(raw,cfg['configurable']['strategy_input'],cfg)
+    with pytest.raises(ValueError):
+        strategy_result(raw,cfg['configurable']['strategy_input'],cfg)
 
 
 def test_canonical_refs_ignore_forged_values_but_reject_missing_data_scope():
     ds,store,ref,cfg=setup_data()
     output=json.loads(analyze_price_performance.invoke({'dataset_id':ref.dataset_id},config=cfg))
-    analysis=output['analysis_ref'];analysis['metrics']['period_return']=999
+    analysis=output['analysis_ref']
+    analysis['metrics']['period_return']=999
     raw={'task':'研究风险','dataset_refs':[ref.model_dump(mode='json')],'analysis_refs':[analysis]}
     canonical=canonical_request(raw,cfg)
     assert canonical.analysis_refs[0]['metrics']['period_return']==pytest.approx(.05)
     raw['dataset_refs']=[]
-    with pytest.raises(ValueError): canonical_request(raw,cfg)
+    with pytest.raises(ValueError):
+        canonical_request(raw,cfg)
     ds.clear()
-    with pytest.raises(KeyError): canonical_request({'task':'x','dataset_refs':[{'dataset_id':ref.dataset_id}]},cfg)
+    with pytest.raises(KeyError):
+        canonical_request({'task':'x','dataset_refs':[{'dataset_id':ref.dataset_id}]},cfg)
 
 
 def test_only_direct_dependencies_grant_references_and_report_is_excluded():
@@ -48,7 +56,9 @@ def test_only_direct_dependencies_grant_references_and_report_is_excluded():
 
 def test_child_cannot_hide_executed_constraint_checks_by_dropping_references():
     _,cfg=context()
-    llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
+    llm=Mock()
+    llm.bind_tools.return_value=llm
+    llm.invoke.side_effect=answer
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         raw=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
     raw['result']['artifact_refs']=[]

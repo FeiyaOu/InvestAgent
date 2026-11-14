@@ -1,11 +1,12 @@
 """Strategy boundary: canonical references in, canonical numerical artifacts out."""
 import json
 from copy import deepcopy
+
 from src.core.datasets import DatasetStore
 from src.specialists.analytics.artifacts import AnalysisStore
 from src.specialists.market_data.state import MarketEvidence
-from src.specialists.strategy.state import StrategyInput, StrategyResult, StrategyAnswer
 from src.specialists.strategy.artifacts import StrategyStore
+from src.specialists.strategy.state import StrategyAnswer, StrategyInput, StrategyResult
 
 
 class StrategyReferenceError(ValueError):
@@ -47,14 +48,16 @@ def canonical_request(raw, config):
         raise ValueError('重复数据引用')
     if ids:
         ds = runtime.get('dataset_store')
-        if not isinstance(ds, DatasetStore): raise ValueError('数据存储缺失')
+        if not isinstance(ds, DatasetStore):
+            raise ValueError('数据存储缺失')
         req.dataset_refs = [ds.get_ref(i).model_dump(mode='json') for i in ids]
     analysis_ids = [r['analysis_id'] for r in req.analysis_refs]
     if len(analysis_ids) != len(set(analysis_ids)):
         raise ValueError('重复分析引用')
     if analysis_ids:
         store = runtime.get('analysis_store')
-        if not isinstance(store, AnalysisStore): raise ValueError('分析存储缺失')
+        if not isinstance(store, AnalysisStore):
+            raise ValueError('分析存储缺失')
         refs = [store.get_ref(i) for i in analysis_ids]
         if any(not {r['dataset_id'] for r in a['dataset_refs']} <= set(ids) for a in refs):
             raise ValueError('分析来源超出授权范围')
@@ -74,10 +77,14 @@ def strategy_inputs(task, results, config):
         payload = record.get('result') or {}
         if record['category'] not in {'market_data','analytics'}:
             continue  # Report internals and arbitrary child state never enter Strategy.
-        for ref in payload.get('dataset_refs',[]): data[ref['dataset_id']] = ref
-        for ref in payload.get('analysis_refs',[]): analyses[ref['analysis_id']] = ref
+        for ref in payload.get('dataset_refs',[]):
+            data[ref['dataset_id']] = ref
+        for ref in payload.get('analysis_refs',[]):
+            analyses[ref['analysis_id']] = ref
         for e in payload.get('evidence',[]):
-            item = deepcopy(e);item['tool_call_id'] = ident + ':' + item['tool_call_id'];evidence.append(item)
+            item = deepcopy(e)
+            item['tool_call_id'] = ident + ':' + item['tool_call_id']
+            evidence.append(item)
     params = task.get('strategy_parameters') or {}
     raw = {**params, 'task':task['question'], 'dataset_refs':list(data.values()),
            'analysis_refs':list(analyses.values()), 'evidence':evidence}
@@ -88,7 +95,8 @@ def strategy_inputs(task, results, config):
 
 def build_result(answer, req, artifacts, scope_id, config):
     store = (config.get('configurable') or {}).get('strategy_store')
-    if not isinstance(store, StrategyStore): raise ValueError('策略存储缺失')
+    if not isinstance(store, StrategyStore):
+        raise ValueError('策略存储缺失')
     if len(answer.artifact_ids) != len(set(answer.artifact_ids)) or not set(answer.artifact_ids) <= set(artifacts):
         raise StrategyReferenceError('artifact_ids', 'artifact_ids只允许本次执行的strategy_产物，不能填写上游analysis_引用；请删除artifact_ids字段。上游分析ID放入结论的evidence_ids。')
     for ident in artifacts:
@@ -109,14 +117,16 @@ def build_result(answer, req, artifacts, scope_id, config):
     if req.scenario_assumptions and req.portfolio is None:
         missing.append('压力测试缺少持仓、现金权重、币种和持仓日期')
         requests.append({'kind':'portfolio','subjects':req.subjects,'time_range':req.time_range,'reason':missing[-1]})
-    if any(row['status']=='unknown' for row in checks): missing.append('部分风险约束无法检查，详见检查结果')
+    if any(row['status']=='unknown' for row in checks):
+        missing.append('部分风险约束无法检查，详见检查结果')
     if not (req.dataset_refs or req.analysis_refs or any(usable_evidence(e) for e in req.evidence) or req.portfolio or refs):
         missing.append('未提供可解析证据或持仓，不形成市场事实判断')
         requests.append({'kind':'evidence','subjects':req.subjects,'time_range':req.time_range,'reason':missing[-1]})
     limits = ['历史风险不保证未来表现；情景是假设，不代表发生概率。', 'V1不支持估值预测、组合优化、HRP或Black-Litterman。']
     limits += [v for r in refs for v in r['limitations']]
     mock = any(r.get('data_mode') == 'mock' for r in req.dataset_refs + req.evidence)
-    if mock: limits.append('包含模拟数据，不作为真实市场事实。')
+    if mock:
+        limits.append('包含模拟数据，不作为真实市场事实。')
     result = StrategyResult(summary=answer.summary, opportunities=answer.opportunities, risks=answer.risks,
         artifact_refs=refs, scenario_results=scenarios, constraint_checks=checks,
         dataset_refs=req.dataset_refs, analysis_refs=req.analysis_refs, evidence=req.evidence,
@@ -145,7 +155,8 @@ def strategy_result(raw, inputs, config):
         if code in messages:
             return 'failed',None,{'type':code,'message':messages[code]}
         return 'failed',None,{'type':'strategy_failed','message':'策略分析未完成，请查看执行记录。'}
-    if raw.get('error') is not None: raise ValueError('可用策略不得带执行错误')
+    if raw.get('error') is not None:
+        raise ValueError('可用策略不得带执行错误')
     parsed = StrategyResult.model_validate(raw['result'])
     req = canonical_request(inputs, config)
     answer = StrategyAnswer(summary=parsed.summary, opportunities=parsed.opportunities, risks=parsed.risks,
@@ -153,6 +164,7 @@ def strategy_result(raw, inputs, config):
         missing_data_requests=parsed.missing_data_requests)
     scope = raw['scope_id']
     expected = (config.get('configurable') or {}).get('strategy_expected_scope')
-    if expected is not None and scope != expected: raise ValueError('策略执行scope不匹配')
+    if expected is not None and scope != expected:
+        raise ValueError('策略执行scope不匹配')
     status, result = build_result(answer,req,answer.artifact_ids,scope,config)
     return ('partial' if raw['status']=='partial' else status),result,None

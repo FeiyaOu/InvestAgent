@@ -1,7 +1,9 @@
 import json
 from unittest.mock import Mock, patch
+
 import pytest
 from langchain_core.messages import AIMessage
+
 from src.specialists.strategy.agent import create_strategy_agent
 from src.specialists.strategy.artifacts import StrategyStore
 from tests.test_strategy_tools import context
@@ -16,7 +18,9 @@ def answer(messages):
 
 def test_graph_tools_and_final_results_are_canonical_and_reset():
     _, cfg = context()
-    llm = Mock(); llm.bind_tools.return_value = llm; llm.invoke.side_effect = answer
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = answer
     graph = create_strategy_agent()
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result = graph.invoke(cfg['configurable']['strategy_input'],config=cfg)
@@ -38,7 +42,8 @@ def test_no_data_is_partial_without_hallucinated_facts_or_model_call():
 
 def test_invented_artifact_reference_preserves_only_canonical_calculations_after_repair():
     _, cfg = context()
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     llm.invoke.return_value=AIMessage(content='{"summary":"test","artifact_ids":["unknown"]}')
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
@@ -49,7 +54,8 @@ def test_invented_artifact_reference_preserves_only_canonical_calculations_after
 
 def test_missing_portfolio_does_not_hide_other_results():
     _,cfg=context(portfolio=None)
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     llm.invoke.side_effect=lambda msgs: AIMessage(content='{"summary":"缺少持仓","missing_information":["需要持仓"]}')
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result=create_strategy_agent().invoke(cfg['configurable']['strategy_input'],config=cfg)
@@ -67,7 +73,8 @@ def test_tool_budget_stops_before_any_execution():
 def test_narrative_only_evidence_needs_no_portfolio_or_tools():
     evidence={'tool_call_id':'e1','tool_name':'news','content':'有来源的研究证据',
               'retrieved_at':'2026-11-13','data_mode':'real','status':'returned'}
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     llm.invoke.return_value=AIMessage(content=json.dumps({'summary':'基于提供证据的定性分析',
         'risks':[{'text':'证据覆盖有限','evidence_ids':['e1']}]}))
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
@@ -79,7 +86,8 @@ def test_narrative_only_evidence_needs_no_portfolio_or_tools():
 
 def test_output_repair_cannot_invoke_more_tools():
     _,cfg=context()
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     llm.invoke.side_effect=[AIMessage(content='bad json'),AIMessage(content='',tool_calls=[
         {'name':'evaluate_risk_constraints','args':{},'id':'extra'}])]
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
@@ -91,7 +99,9 @@ def test_output_repair_cannot_invoke_more_tools():
 
 def test_new_invocation_resets_artifacts_and_rejects_previous_reference():
     store,cfg=context()
-    llm=Mock();llm.bind_tools.return_value=llm;llm.invoke.side_effect=answer
+    llm=Mock()
+    llm.bind_tools.return_value=llm
+    llm.invoke.side_effect=answer
     graph=create_strategy_agent()
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         first=graph.invoke(cfg['configurable']['strategy_input'],config=cfg)
@@ -126,12 +136,13 @@ def test_failed_market_tool_response_is_not_successful_evidence():
 
 
 def test_drawdown_tool_results_survive_explanation_model_failure():
-    from tests.test_analytics_agent import setup_data
     from src.specialists.analytics.tools import analyze_price_performance
+    from tests.test_analytics_agent import setup_data
     _,_,ref,cfg=setup_data()
     cfg['configurable']['strategy_store']=StrategyStore()
     a=json.loads(analyze_price_performance.invoke({'dataset_id':ref.dataset_id},config=cfg))['analysis_ref']
-    llm=Mock();llm.invoke.side_effect=RuntimeError('private provider error')
+    llm=Mock()
+    llm.invoke.side_effect=RuntimeError('private provider error')
     llm.bind_tools.return_value=llm
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result=create_strategy_agent().invoke({'task':'检查历史回撤上限5%', 'subjects':['600519'],
@@ -154,7 +165,8 @@ def test_strategy_validation_failure_emits_safe_field_diagnostics():
 def test_pure_opportunity_explanation_does_not_bind_inapplicable_tools():
     evidence={'tool_call_id':'e1','tool_name':'lookup','content':'研究证据',
               'retrieved_at':'2026-11-13','data_mode':'real','status':'returned'}
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     llm.invoke.return_value=AIMessage(content='{"summary":"基于已有证据解释机会与风险"}')
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
         result=create_strategy_agent().invoke({'task':'分析未来机会与风险','evidence':[evidence]},
@@ -166,7 +178,8 @@ def test_pure_opportunity_explanation_does_not_bind_inapplicable_tools():
 def test_unexpected_tool_request_is_repaired_without_execution_or_fake_tool_history():
     evidence={'tool_call_id':'e1','tool_name':'lookup','content':'研究证据',
               'retrieved_at':'2026-11-13','data_mode':'real','status':'returned'}
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     llm.invoke.side_effect=[AIMessage(content='',tool_calls=[{'name':'forecast_stock','args':{},'id':'bad'}]),
                            AIMessage(content='{"summary":"基于证据的定性解释"}')]
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
@@ -178,16 +191,18 @@ def test_unexpected_tool_request_is_repaired_without_execution_or_fake_tool_hist
 
 
 def test_performance_plus_valuation_handoff_is_narrative_only_without_limits():
+    from src.specialists.analytics.tools import analyze_price_performance, compare_valuations
     from tests.test_analytics_agent import setup_data
     from tests.test_factors_valuations import valuation
-    from src.specialists.analytics.tools import analyze_price_performance, compare_valuations
     ds,_,p1,cfg=setup_data()
     p2=ds.put(ds.get(p1.dataset_id).model_copy(update={'symbol':'000858','market':'SZSE'}))
-    v1=valuation(ds,'600519');v2=valuation(ds,'000858')
+    v1=valuation(ds,'600519')
+    v2=valuation(ds,'000858')
     analyses=[json.loads(analyze_price_performance.invoke({'dataset_id':p.dataset_id},config=cfg))['analysis_ref'] for p in (p1,p2)]
     analyses.append(json.loads(compare_valuations.invoke({'dataset_ids':[v1.dataset_id,v2.dataset_id]},config=cfg))['analysis_ref'])
     cfg['configurable']['strategy_store']=StrategyStore()
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     llm.invoke.return_value=AIMessage(content=json.dumps({'summary':'结合已有估值与历史风险解释机会和限制',
         'risks':[{'text':'历史回撤不保证未来风险','evidence_ids':[analyses[0]['analysis_id']]}]}))
     with patch('src.specialists.strategy.nodes.create_llm',return_value=llm):
@@ -200,12 +215,13 @@ def test_performance_plus_valuation_handoff_is_narrative_only_without_limits():
 
 
 def test_analysis_ids_in_artifact_field_get_actionable_repair_manifest():
-    from tests.test_analytics_agent import setup_data
     from src.specialists.analytics.tools import analyze_price_performance
+    from tests.test_analytics_agent import setup_data
     _,_,ref,cfg=setup_data()
     cfg['configurable']['strategy_store']=StrategyStore()
     a=json.loads(analyze_price_performance.invoke({'dataset_id':ref.dataset_id},config=cfg))['analysis_ref']
-    llm=Mock();llm.bind_tools.return_value=llm
+    llm=Mock()
+    llm.bind_tools.return_value=llm
     replies=iter([False,True])
     def respond(messages):
         if not next(replies):

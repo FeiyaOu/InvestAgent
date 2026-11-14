@@ -7,10 +7,10 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from src.specialists.analytics.artifacts import AnalysisStore
-from src.specialists.analytics.tools import compute_factors, compare_valuations
 from src.core.datasets import DatasetStore, PriceDataset, ValuationDataset
 from src.data.tools import get_valuation_snapshot
+from src.specialists.analytics.artifacts import AnalysisStore
+from src.specialists.analytics.tools import compare_valuations, compute_factors
 
 
 def context():
@@ -113,7 +113,8 @@ def test_unknown_metric_basis_does_not_produce_comparable_spread():
 def test_acquisition_uses_ttm_not_static_and_actual_observation_day(monkeypatch):
     monkeypatch.setenv("USE_REAL_DATA", "true")
     ds, _, config = context()
-    provider = Mock(); provider.stock_value_em.return_value = pd.DataFrame({
+    provider = Mock()
+    provider.stock_value_em.return_value = pd.DataFrame({
         "数据日期": ["2025-01-02", "2025-01-03", "2025-01-06"],
         "PE(TTM)": [20., 21., 22.], "PE(静)": [999., 999., 999.], "市净率": [2., 2.1, 2.2]})
     with patch.dict(sys.modules, {"akshare": provider}):
@@ -133,7 +134,8 @@ def test_acquisition_mock_and_provider_failure_are_explicit(monkeypatch):
     result = json.loads(get_valuation_snapshot.invoke({"query": "五粮液", "as_of_date": "2025-01-03"}, config=config))
     assert result["dataset_ref"]["data_mode"] == "mock"
     monkeypatch.setenv("USE_REAL_DATA", "true")
-    provider = Mock(); provider.stock_value_em.side_effect = RuntimeError("secret")
+    provider = Mock()
+    provider.stock_value_em.side_effect = RuntimeError("secret")
     with patch.dict(sys.modules, {"akshare": provider}):
         result = json.loads(get_valuation_snapshot.invoke({"query": "茅台"}, config=config))
     assert result["status"] == "unavailable" and "dataset_ref" not in result

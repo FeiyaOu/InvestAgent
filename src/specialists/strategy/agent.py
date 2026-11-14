@@ -1,8 +1,14 @@
 """Explicit Strategy/Risk LangGraph subgraph with a bounded ToolNode loop."""
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import END, START, StateGraph
+
+from src.specialists.strategy.nodes import (
+    initialize,
+    make_agent_node,
+    make_finalize_node,
+    make_tools_node,
+)
 from src.specialists.strategy.state import StrategyState
 from src.specialists.strategy.tools import evaluate_risk_constraints, stress_test_portfolio
-from src.specialists.strategy.nodes import initialize, make_agent_node, make_tools_node, make_finalize_node
 
 STRATEGY_TOOLS=[evaluate_risk_constraints,stress_test_portfolio]
 

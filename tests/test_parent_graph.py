@@ -48,7 +48,9 @@ def test_clarification_skips_supervisor_and_model_composition():
     assert result["supervisor_status"] is None
     assert result["composition_status"] == "needs_clarification"
     assert "哪家公司" in result["final_response"]
-    md.invoke.assert_not_called(); report.invoke.assert_not_called(); composing.invoke.assert_not_called()
+    md.invoke.assert_not_called()
+    report.invoke.assert_not_called()
+    composing.invoke.assert_not_called()
 
 
 def test_invalid_plan_skips_execution_and_returns_readable_failure():
@@ -57,14 +59,17 @@ def test_invalid_plan_skips_execution_and_returns_readable_failure():
     assert result["composition_status"] == "failed"
     assert result["final_response"]
     assert result["task_results"] == {}
-    md.invoke.assert_not_called(); composing.invoke.assert_not_called()
+    md.invoke.assert_not_called()
+    composing.invoke.assert_not_called()
 
 
 def test_invalid_user_input_does_not_call_models():
     result, md, _, planning, composing = execute(plan(), {"user_query": " "})
     assert result["planning_error"]["type"] == "invalid_input"
     assert result["final_response"]
-    md.invoke.assert_not_called(); planning.invoke.assert_not_called(); composing.invoke.assert_not_called()
+    md.invoke.assert_not_called()
+    planning.invoke.assert_not_called()
+    composing.invoke.assert_not_called()
 
 
 def test_mixed_tasks_keep_success_and_strategy_missing_evidence():
@@ -88,7 +93,8 @@ def test_report_state_stays_in_task_payload_and_is_not_composed(valid_report):
     report = Mock()
     report.invoke.return_value = {"current_phase": "completed", "error": None,
         "final_report": json.dumps(valid_report), "perception_data": {"detail": "kept"}}
-    planning = Mock(); planning.invoke.return_value = plan(task("r", "report"))
+    planning = Mock()
+    planning.invoke.return_value = plan(task("r", "report"))
     with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
             "src.orchestration.composer._create_chain") as composing:
         result = create_parent_graph(market_data_graph=market(), report_graph=report).invoke({
@@ -100,8 +106,10 @@ def test_report_state_stays_in_task_payload_and_is_not_composed(valid_report):
 
 def test_stream_exposes_task_progress_and_composition():
     md = market()
-    planning = Mock(); planning.invoke.return_value = plan()
-    composing = Mock(); composing.invoke.return_value = {"answer": "100元"}
+    planning = Mock()
+    planning.invoke.return_value = plan()
+    composing = Mock()
+    composing.invoke.return_value = {"answer": "100元"}
     graph = create_parent_graph(market_data_graph=md, report_graph=Mock())
     with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
             "src.orchestration.composer._create_chain", return_value=composing):
@@ -112,8 +120,10 @@ def test_stream_exposes_task_progress_and_composition():
 
 
 def test_reused_parent_graph_does_not_keep_previous_request():
-    planning = Mock(); planning.invoke.side_effect = [plan(task("old")), plan(task("new"))]
-    composing = Mock(); composing.invoke.return_value = {"answer": "100元"}
+    planning = Mock()
+    planning.invoke.side_effect = [plan(task("old")), plan(task("new"))]
+    composing = Mock()
+    composing.invoke.return_value = {"answer": "100元"}
     graph = create_parent_graph(market_data_graph=market(), report_graph=Mock())
     with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
             "src.orchestration.composer._create_chain", return_value=composing):
@@ -126,8 +136,10 @@ def test_reused_parent_graph_does_not_keep_previous_request():
 def test_dataset_store_is_per_request_not_state_or_global():
     from src.core.datasets import DatasetStore
     md = market()
-    planning = Mock(); planning.invoke.return_value = plan()
-    composing = Mock(); composing.invoke.return_value = {"answer": "100元"}
+    planning = Mock()
+    planning.invoke.return_value = plan()
+    composing = Mock()
+    composing.invoke.return_value = {"answer": "100元"}
     graph = create_parent_graph(market_data_graph=md, report_graph=Mock())
     with patch("src.orchestration.planner._create_chain", return_value=planning), patch(
             "src.orchestration.composer._create_chain", return_value=composing):
@@ -143,7 +155,8 @@ def test_report_intent_repair_dispatches_report_without_executing_rejected_data_
     import json
     md, report=market(),Mock()
     report.invoke.return_value={'current_phase':'completed','error':None,'final_report':json.dumps(valid_report)}
-    planning=Mock();planning.invoke.side_effect=[plan(task()),plan(task('r','report'))]
+    planning=Mock()
+    planning.invoke.side_effect=[plan(task()),plan(task('r','report'))]
     with patch('src.orchestration.planner._create_chain',return_value=planning):
         result=create_parent_graph(market_data_graph=md,report_graph=report).invoke(
             {'user_query':'请生成新能源行业未来一年的投研报告，重点关注光伏。'})

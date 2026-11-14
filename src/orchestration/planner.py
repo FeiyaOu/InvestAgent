@@ -1,21 +1,26 @@
 """Independent planner node: classify and validate tasks, never execute them."""
 import json
 import os
-from uuid import uuid4
-from langgraph.config import get_stream_writer
-from src.core.validation_diagnostics import validation_diagnostics
 from datetime import datetime
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+from langgraph.config import get_stream_writer
 from pydantic import ValidationError
 
 from src.core.llm import FAST_MODEL, create_llm
-from src.orchestration.report_intent import validate_report_intent, ReportIntentError
-from src.orchestration.planner_schemas import PlannerState, TaskPlan, AnalyticsDependencyError, planner_output_schema
+from src.core.validation_diagnostics import validation_diagnostics
+from src.orchestration.planner_schemas import (
+    AnalyticsDependencyError,
+    PlannerState,
+    TaskPlan,
+    planner_output_schema,
+)
+from src.orchestration.report_intent import ReportIntentError, validate_report_intent
 
 _SYSTEM = """你是投研助手的任务规划器。只输出计划，不回答问题、不调用工具、不执行专家。
 将用户请求拆解为必要而不重复的任务，分类如下：
@@ -139,7 +144,8 @@ def planner(state: PlannerState, *, max_retries: int = 1) -> dict:
     try:
         writer = get_stream_writer()
     except RuntimeError:
-        writer = lambda event: None  # Standalone callers need no graph stream context.
+        def writer(event):  # Standalone callers need no graph stream context.
+            return None
 
     def emit(attempt, status, diagnostics=None):
         writer({"event": "planner_attempt", "stage": "planner", "run_id": run_id,

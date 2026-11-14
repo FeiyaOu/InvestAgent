@@ -2,16 +2,28 @@
 import json
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage, RemoveMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.prebuilt import ToolNode
 from pydantic import ValidationError
 
-from src.specialists.analytics.artifacts import AnalysisStore
-from src.specialists.analytics.state import AnalyticsInput, AnalyticsAnswer, AnalyticsResult, AnalyticsState, MissingDataRequest
 from src.core.datasets import DatasetStore
 from src.core.llm import FAST_MODEL, create_llm
+from src.specialists.analytics.artifacts import AnalysisStore
+from src.specialists.analytics.state import (
+    AnalyticsAnswer,
+    AnalyticsInput,
+    AnalyticsResult,
+    AnalyticsState,
+    MissingDataRequest,
+)
 
 METHODOLOGY_PATH = Path(__file__).resolve().parents[3] / "research_skills" / "analytics-methodology" / "SKILL.md"
 

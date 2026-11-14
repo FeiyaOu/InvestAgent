@@ -16,7 +16,6 @@ import os
 from typing import Literal
 
 from langchain_core.runnables import RunnableConfig
-
 from langchain_core.tools import tool
 
 _SINA_FUNCTIONS = {"stock_zh_a_daily", "stock_zh_index_daily"}
@@ -29,6 +28,7 @@ def _call_sina(function: str, **kwargs):
     import sys
     from io import StringIO
     from pathlib import Path
+
     import pandas as pd
 
     if function not in _SINA_FUNCTIONS:
@@ -624,6 +624,7 @@ def get_price_history(query: str, start_date: str, end_date: str, config: Runnab
     from zoneinfo import ZoneInfo
 
     import pandas as pd
+
     from src.core.datasets import DatasetStore, PriceDataset
 
     def unavailable(kind, message):
@@ -727,7 +728,9 @@ def get_valuation_snapshot(query: str, config: RunnableConfig, as_of_date: str |
     import math
     from datetime import date, datetime, timezone
     from zoneinfo import ZoneInfo
+
     import pandas as pd
+
     from src.core.datasets import DatasetStore, ValuationDataset
 
     def unavailable(kind, message):

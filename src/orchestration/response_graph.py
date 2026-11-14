@@ -1,13 +1,13 @@
 """Independent Supervisor → Composer execution graph, accepting an existing plan."""
 from langchain_core.runnables import RunnableConfig
-from src.core.datasets import DatasetStore
-from src.specialists.analytics.artifacts import AnalysisStore
-from src.specialists.strategy.artifacts import StrategyStore
 from langgraph.graph import END, START, StateGraph
 
-from src.orchestration.composer_state import ResponseState
+from src.core.datasets import DatasetStore
 from src.orchestration.composer import composer
+from src.orchestration.composer_state import ResponseState
 from src.orchestration.supervisor import create_supervisor_graph
+from src.specialists.analytics.artifacts import AnalysisStore
+from src.specialists.strategy.artifacts import StrategyStore
 
 
 def create_response_graph(*, market_data_graph=None, report_graph=None, analytics_graph=None, strategy_graph=None):

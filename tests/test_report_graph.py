@@ -2,8 +2,8 @@
 from contextlib import ExitStack
 from unittest.mock import patch
 
-from src.specialists.report.graph import create_report_graph
 from src.orchestration.parent_graph import create_parent_graph
+from src.specialists.report.graph import create_report_graph
 
 
 def build(retries=0, parent=False):

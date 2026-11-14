@@ -1,8 +1,9 @@
 """Validated task plans for the future parent graph."""
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import TypedDict
+
 from src.specialists.analytics.state import AnalyticsAssumptions
 from src.specialists.strategy.state import StrategyParameters
 
